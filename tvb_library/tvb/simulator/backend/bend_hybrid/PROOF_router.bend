@@ -769,3 +769,132 @@ def delay_inj_go(+n: Nat, +a: Nat, +b: Nat,
 
 def Laws.delay_injective(n, a, b, h, hb):
   delay_inj_go(n, a, b, h, hb)
+
+# --------------------------------------------------------------------------
+# 6. the ok(cfg)=True law family
+# --------------------------------------------------------------------------
+
+# and-elimination, both halves
+def and_elim_l_go(a: Bool, b: Bool, +h: {Bool.and(a, b) == True{} : Bool})
+    -> {a == True{} : Bool}:
+  match a:
+    case True{}:
+      {==}
+    case False{}:
+      Bool.fne({False{} == True{} : Bool}, h)
+
+def Laws.and_elim_l(a, b, h):
+  and_elim_l_go(a, b, h)
+
+def and_elim_r_go(a: Bool, b: Bool, +h: {Bool.and(a, b) == True{} : Bool})
+    -> {b == True{} : Bool}:
+  match a:
+    case True{}:
+      h
+    case False{}:
+      Bool.fne({b == True{} : Bool}, h)
+
+def Laws.and_elim_r(a, b, h):
+  and_elim_r_go(a, b, h)
+
+# ok decomposes: the outer and's left half is lanes_ok
+def Laws.ok_lanes(c, h):
+  and_elim_l_go(R.lanes_ok(R.cfg_lanes(c)),
+                Bool.and(R.projs_shape_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c), R.cfg_projs(c)),
+                         R.writes_unique(R.cfg_projs(c))),
+                h)
+
+# the outer and's right half, decomposed again
+def Laws.ok_projs(c, h):
+  and_elim_l_go(R.projs_shape_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c), R.cfg_projs(c)),
+                R.writes_unique(R.cfg_projs(c)),
+                and_elim_r_go(R.lanes_ok(R.cfg_lanes(c)),
+                              Bool.and(R.projs_shape_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c), R.cfg_projs(c)),
+                                       R.writes_unique(R.cfg_projs(c))),
+                              h))
+
+def Laws.ok_unique(c, h):
+  and_elim_r_go(R.projs_shape_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c), R.cfg_projs(c)),
+                R.writes_unique(R.cfg_projs(c)),
+                and_elim_r_go(R.lanes_ok(R.cfg_lanes(c)),
+                              Bool.and(R.projs_shape_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c), R.cfg_projs(c)),
+                                       R.writes_unique(R.cfg_projs(c))),
+                              h))
+
+# per-edge decomposition of projs_shape_ok
+def projs_ok_cons_go(+nlanes: Nat, +horizon: Nat, +p: R.Proj,
+                     +ps: List<&2, R.Proj>,
+                     +h: {R.projs_shape_ok(nlanes, horizon, p <> ps) == True{} : Bool})
+    -> {R.proj_shape_ok(nlanes, horizon, p) == True{} : Bool}:
+  and_elim_l_go(R.proj_shape_ok(nlanes, horizon, p),
+                R.projs_shape_ok(nlanes, horizon, ps), h)
+
+def Laws.projs_ok_cons(nlanes, horizon, p, ps, h):
+  projs_ok_cons_go(nlanes, horizon, p, ps, h)
+
+def projs_ok_tail_go(+nlanes: Nat, +horizon: Nat, +p: R.Proj,
+                     +ps: List<&2, R.Proj>,
+                     +h: {R.projs_shape_ok(nlanes, horizon, p <> ps) == True{} : Bool})
+    -> {R.projs_shape_ok(nlanes, horizon, ps) == True{} : Bool}:
+  and_elim_r_go(R.proj_shape_ok(nlanes, horizon, p),
+                R.projs_shape_ok(nlanes, horizon, ps), h)
+
+def Laws.projs_ok_tail(nlanes, horizon, p, ps, h):
+  projs_ok_tail_go(nlanes, horizon, p, ps, h)
+
+# proj_shape_ok's delay conjunct
+def proj_delay_fits_go(+nlanes: Nat, +horizon: Nat, +p: R.Proj,
+                       h: {R.proj_shape_ok(nlanes, horizon, p) == True{} : Bool})
+    -> {Nat.is_le(Nat.add(R.proj_d(p), 1n), horizon) == True{} : Bool}:
+  h_rest = and_elim_r_go(Nat.is_lt(R.proj_src(p), nlanes),
+                         Bool.and(Nat.is_lt(R.proj_tgt(p), nlanes),
+                                  Bool.and(Nat.is_le(Nat.add(R.proj_d(p), 1n), horizon),
+                                           Nat.is_le(Nat.add(R.proj_d(p), R.proj_win(p)), horizon))),
+                         h)
+  h_rest2 = and_elim_r_go(Nat.is_lt(R.proj_tgt(p), nlanes),
+                          Bool.and(Nat.is_le(Nat.add(R.proj_d(p), 1n), horizon),
+                                   Nat.is_le(Nat.add(R.proj_d(p), R.proj_win(p)), horizon)),
+                          h_rest)
+  and_elim_l_go(Nat.is_le(Nat.add(R.proj_d(p), 1n), horizon),
+                Nat.is_le(Nat.add(R.proj_d(p), R.proj_win(p)), horizon),
+                h_rest2)
+
+def Laws.proj_delay_fits(nlanes, horizon, p, h):
+  proj_delay_fits_go(nlanes, horizon, p, h)
+
+# proj_shape_ok's window conjunct: peel the three leading and-conjuncts
+def proj_win_fits_go(+nlanes: Nat, +horizon: Nat, +p: R.Proj,
+                     h: {R.proj_shape_ok(nlanes, horizon, p) == True{} : Bool})
+    -> {Nat.is_le(Nat.add(R.proj_d(p), R.proj_win(p)), horizon) == True{} : Bool}:
+  h_rest = and_elim_r_go(Nat.is_lt(R.proj_src(p), nlanes),
+                         Bool.and(Nat.is_lt(R.proj_tgt(p), nlanes),
+                                  Bool.and(Nat.is_le(Nat.add(R.proj_d(p), 1n), horizon),
+                                           Nat.is_le(Nat.add(R.proj_d(p), R.proj_win(p)), horizon))),
+                         h)
+  h_rest2 = and_elim_r_go(Nat.is_lt(R.proj_tgt(p), nlanes),
+                          Bool.and(Nat.is_le(Nat.add(R.proj_d(p), 1n), horizon),
+                                   Nat.is_le(Nat.add(R.proj_d(p), R.proj_win(p)), horizon)),
+                          h_rest)
+  and_elim_r_go(Nat.is_le(Nat.add(R.proj_d(p), 1n), horizon),
+                Nat.is_le(Nat.add(R.proj_d(p), R.proj_win(p)), horizon),
+                h_rest2)
+
+def Laws.proj_win_fits(nlanes, horizon, p, h):
+  proj_win_fits_go(nlanes, horizon, p, h)
+
+# lanes_ok decomposes per-cons
+def lanes_ok_cons_go(+k: Nat, +ks: List<&2, Nat>,
+                     h: {R.lanes_ok(k <> ks) == True{} : Bool})
+    -> {Nat.is_ge(k, 1n) == True{} : Bool}:
+  and_elim_l_go(Nat.is_ge(k, 1n), R.lanes_ok(ks), h)
+
+def Laws.lanes_ok_cons(k, ks, h):
+  lanes_ok_cons_go(k, ks, h)
+
+def lanes_ok_tail_go(+k: Nat, +ks: List<&2, Nat>,
+                     h: {R.lanes_ok(k <> ks) == True{} : Bool})
+    -> {R.lanes_ok(ks) == True{} : Bool}:
+  and_elim_r_go(Nat.is_ge(k, 1n), R.lanes_ok(ks), h)
+
+def Laws.lanes_ok_tail(k, ks, h):
+  lanes_ok_tail_go(k, ks, h)

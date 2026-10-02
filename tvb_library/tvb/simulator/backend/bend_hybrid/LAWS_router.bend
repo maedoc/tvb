@@ -516,3 +516,89 @@ law delay_injective:
   for +h: {Nat.is_lt(a, b) == True{} : Bool}
   for hb: R.le_ok(b, n)
   {Nat.is_ne(Nat.sub(n, a), Nat.sub(n, b)) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# 6. the ok(cfg)=True law family: the validator implies the shape facts
+# --------------------------------------------------------------------------
+# The binary dies on ok(cfg) == False, so the interesting routing facts are
+# CONDITIONAL on acceptance.  These laws make the "unreachable under ok"
+# comments real: from ok(cfg) == True, each conjunct is invertible.  They
+# are the bricks for any ok-conditioned routing theorem (e.g. every routed
+# read of an accepted config is fresh and inside the horizon).
+
+# and-elimination, both halves
+law and_elim_l:
+  for a: Bool
+  for b: Bool
+  for +h: {Bool.and(a, b) == True{} : Bool}
+  {a == True{} : Bool}
+
+law and_elim_r:
+  for a: Bool
+  for b: Bool
+  for +h: {Bool.and(a, b) == True{} : Bool}
+  {b == True{} : Bool}
+
+# ok(cfg) == True decomposes into the three validator conjuncts
+law ok_lanes:
+  for +c: R.Config
+  for +h: {R.ok(c) == True{} : Bool}
+  {R.lanes_ok(R.cfg_lanes(c)) == True{} : Bool}
+
+law ok_projs:
+  for +c: R.Config
+  for +h: {R.ok(c) == True{} : Bool}
+  {R.projs_shape_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c), R.cfg_projs(c)) == True{} : Bool}
+
+law ok_unique:
+  for +c: R.Config
+  for +h: {R.ok(c) == True{} : Bool}
+  {R.writes_unique(R.cfg_projs(c)) == True{} : Bool}
+
+# the per-edge half: every projection of an accepted config is in shape
+law projs_ok_cons:
+  for +nlanes: Nat
+  for +horizon: Nat
+  for +p: R.Proj
+  for +ps: List<&2, R.Proj>
+  for +h: {R.projs_shape_ok(nlanes, horizon, p <> ps) == True{} : Bool}
+  {R.proj_shape_ok(nlanes, horizon, p) == True{} : Bool}
+
+law projs_ok_tail:
+  for +nlanes: Nat
+  for +horizon: Nat
+  for +p: R.Proj
+  for +ps: List<&2, R.Proj>
+  for +h: {R.projs_shape_ok(nlanes, horizon, p <> ps) == True{} : Bool}
+  {R.projs_shape_ok(nlanes, horizon, ps) == True{} : Bool}
+
+# the delay conjunct of proj_shape_ok: every accepted projection's delay
+# fits the horizon (the csr_ok premise, at the projection level)
+law proj_delay_fits:
+  for +nlanes: Nat
+  for +horizon: Nat
+  for +p: R.Proj
+  for +h: {R.proj_shape_ok(nlanes, horizon, p) == True{} : Bool}
+  {Nat.is_le(Nat.add(R.proj_d(p), 1n), horizon) == True{} : Bool}
+
+# the window conjunct of proj_shape_ok: every accepted projection's window
+# fits the horizon together with its delay (the anti-alias premise)
+law proj_win_fits:
+  for +nlanes: Nat
+  for +horizon: Nat
+  for +p: R.Proj
+  for +h: {R.proj_shape_ok(nlanes, horizon, p) == True{} : Bool}
+  {Nat.is_le(Nat.add(R.proj_d(p), R.proj_win(p)), horizon) == True{} : Bool}
+
+# lanes_ok decomposes: every lane of an accepted config has period >= 1
+law lanes_ok_cons:
+  for +k: Nat
+  for +ks: List<&2, Nat>
+  for +h: {R.lanes_ok(k <> ks) == True{} : Bool}
+  {Nat.is_ge(k, 1n) == True{} : Bool}
+
+law lanes_ok_tail:
+  for +k: Nat
+  for +ks: List<&2, Nat>
+  for +h: {R.lanes_ok(k <> ks) == True{} : Bool}
+  {R.lanes_ok(ks) == True{} : Bool}
