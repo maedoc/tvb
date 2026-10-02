@@ -602,3 +602,34 @@ law lanes_ok_tail:
   for +ks: List<&2, Nat>
   for +h: {R.lanes_ok(k <> ks) == True{} : Bool}
   {R.lanes_ok(ks) == True{} : Bool}
+
+# the remaining proj_shape_ok conjuncts: src and tgt are in bounds -- these
+# are what makes router.bend's nth_lane default branch ("unreachable under
+# ok(cfg)") honest: an accepted projection's src indexes a REAL lane
+law proj_src_bounded:
+  for +nlanes: Nat
+  for +horizon: Nat
+  for +p: R.Proj
+  for +h: {R.proj_shape_ok(nlanes, horizon, p) == True{} : Bool}
+  {Nat.is_lt(R.proj_src(p), nlanes) == True{} : Bool}
+
+law proj_tgt_bounded:
+  for +nlanes: Nat
+  for +horizon: Nat
+  for +p: R.Proj
+  for +h: {R.proj_shape_ok(nlanes, horizon, p) == True{} : Bool}
+  {Nat.is_lt(R.proj_tgt(p), nlanes) == True{} : Bool}
+
+# the lookup bricks: nth_lane descends init_lanes structurally, so a
+# bounded index lands on a real lane (the default Lane{1,0,0} branch is
+# reachable only past the end of the list)
+law nth_init_zero:
+  for +k: Nat
+  for +ks: List<&2, Nat>
+  {R.nth_lane(R.init_lanes(k <> ks), 0n) == R.lane_init(k) : R.Lane}
+
+law nth_init_succ:
+  for +k: Nat
+  for +ks: List<&2, Nat>
+  for i: Nat
+  {R.nth_lane(R.init_lanes(k <> ks), 1n+i) == R.nth_lane(R.init_lanes(ks), i) : R.Lane}

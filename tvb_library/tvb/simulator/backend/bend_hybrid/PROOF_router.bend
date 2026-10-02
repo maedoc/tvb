@@ -898,3 +898,44 @@ def lanes_ok_tail_go(+k: Nat, +ks: List<&2, Nat>,
 
 def Laws.lanes_ok_tail(k, ks, h):
   lanes_ok_tail_go(k, ks, h)
+
+# the src conjunct is the FIRST and of proj_shape_ok
+def proj_src_bounded_go(+nlanes: Nat, +horizon: Nat, +p: R.Proj,
+                        h: {R.proj_shape_ok(nlanes, horizon, p) == True{} : Bool})
+    -> {Nat.is_lt(R.proj_src(p), nlanes) == True{} : Bool}:
+  and_elim_l_go(Nat.is_lt(R.proj_src(p), nlanes),
+                Bool.and(Nat.is_lt(R.proj_tgt(p), nlanes),
+                         Bool.and(Nat.is_le(Nat.add(R.proj_d(p), 1n), horizon),
+                                  Nat.is_le(Nat.add(R.proj_d(p), R.proj_win(p)), horizon))),
+                h)
+
+def Laws.proj_src_bounded(nlanes, horizon, p, h):
+  proj_src_bounded_go(nlanes, horizon, p, h)
+
+# the tgt conjunct: peel src first, then take the left half
+def proj_tgt_bounded_go(+nlanes: Nat, +horizon: Nat, +p: R.Proj,
+                        h: {R.proj_shape_ok(nlanes, horizon, p) == True{} : Bool})
+    -> {Nat.is_lt(R.proj_tgt(p), nlanes) == True{} : Bool}:
+  h_rest = and_elim_r_go(Nat.is_lt(R.proj_src(p), nlanes),
+                         Bool.and(Nat.is_lt(R.proj_tgt(p), nlanes),
+                                  Bool.and(Nat.is_le(Nat.add(R.proj_d(p), 1n), horizon),
+                                           Nat.is_le(Nat.add(R.proj_d(p), R.proj_win(p)), horizon))),
+                         h)
+  and_elim_l_go(Nat.is_lt(R.proj_tgt(p), nlanes),
+                Bool.and(Nat.is_le(Nat.add(R.proj_d(p), 1n), horizon),
+                         Nat.is_le(Nat.add(R.proj_d(p), R.proj_win(p)), horizon)),
+                h_rest)
+
+def Laws.proj_tgt_bounded(nlanes, horizon, p, h):
+  proj_tgt_bounded_go(nlanes, horizon, p, h)
+
+# lookup bricks: both are definitional once the cons pattern opens
+def Laws.nth_init_zero(k, ks):
+  match ks:
+    case Nil{}:
+      {==}
+    case h <> t:
+      {==}
+
+def Laws.nth_init_succ(k, ks, i):
+  {==}

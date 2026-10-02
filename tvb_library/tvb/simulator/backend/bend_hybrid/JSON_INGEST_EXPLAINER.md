@@ -278,7 +278,7 @@ Both are rejected, in `tests/run_json.sh` and in the router gate.
 
 ## What this does NOT say
 
-- **`ok` acceptance is still instance-pinned.** There is no `∀c. ok(c)=True ⟹ P(c)` law family yet — "unreachable under ok(cfg)" comments remain informal. That is the next step (with the Python property harness attacking the decoder + `ok` boundary from outside).
+- **`ok` acceptance is quantified now, not instance-pinned.** The `ok(cfg)=True` law family (LAWS_router: conjuncts invertible via `and_elim_l/r`, `ok_lanes`, `ok_projs`, `ok_unique`, cons/tail inversion of `lanes_ok`/`projs_ok`, `proj_delay_fits`, `proj_win_fits`) plus the boundedness/lookup laws (`proj_src_bounded`, `proj_tgt_bounded`, `nth_init_zero`, `nth_init_succ`) discharge the old "unreachable under ok(cfg)" comments, and the capstone `json_read_fresh` (LAWS_json) carries them through the JSON fold: every routed line of any ACCEPTED config is fresh at every tick, for every string. Remaining prose-only: `nth_lane`'s saturating default is still reachable only by construction (freshness is stated against it, so the law covers even that path).
 - **The tokenizer's U32 text handling is in the TCB.** The laws quantify over decoded values; a `Nat` field cannot come out negative because `digit_val` builds it from digits, but that argument is prose, not proof.
 - **F32 values remain uncovered by value laws** (op-order contracts only; differential testing pins values).
 - **Codegen is trusted**, as always.

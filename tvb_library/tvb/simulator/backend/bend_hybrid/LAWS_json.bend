@@ -78,3 +78,22 @@ law json_decode_instance:
 # garbage decodes to the empty default config -- still on the plateau
 law json_decode_garbage:
   {J.json_decode("zz not json") == R.Config{Nil{}, Nil{}, 0n} : R.Config}
+
+# --------------------------------------------------------------------------
+# 4. the ok-conditioned capstone: every routed line of an ACCEPTED config
+#    is FRESH, for every JSON string, at every tick
+# --------------------------------------------------------------------------
+
+# For every string s whose decoded config PASSES the validator, every routed
+# read (all projections, any tick m) reads at or behind the newest published
+# sample of its source lane: no read sees the future.  This composes the
+# ok(cfg)=True law family (LAWS_router section 6) through the ingress fold:
+# ok_lanes -> projs_ok_cons -> proj_src_bounded keep the lookup inside the
+# lane list, and read_fresh (LAWS_router) closes each line.  The hypothesis
+# is the validator the binary itself runs, so ACCEPTED input cannot escape.
+law json_read_fresh:
+  for +s: String
+  for +m: Nat
+  for +h: {R.ok(J.json_decode(s)) == True{} : Bool}
+  {J.bumps_fresh(J.lanes_run(m, R.init_lanes(R.cfg_lanes(J.json_decode(s)))),
+                 R.cfg_projs(J.json_decode(s)), 0n) == True{} : Bool}

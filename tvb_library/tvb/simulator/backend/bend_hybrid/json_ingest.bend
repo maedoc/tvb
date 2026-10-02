@@ -390,3 +390,17 @@ def routes_bump(+ls: List<&2, R.Lane>, ps: List<&2, R.Proj>, +e: Nat) -> List<&2
 
 def run_bump(+c: R.Config, m: Nat, +e: Nat) -> List<&2, R.Line>:
   routes_bump(lanes_run(m, R.init_lanes(R.cfg_lanes(c))), R.cfg_projs(c), e)
+# a line is fresh iff its i1 is at or behind the newest published sample of
+# the lane it was routed from; a bump list is fresh pointwise.  Used by
+# the json_read_fresh law (LAWS_json): every routed line of an ACCEPTED
+# config is fresh at every tick, for every JSON string.
+def line_fresh(+ls: List<&2, R.Lane>, +l: R.Line, +src: Nat) -> Bool:
+  Nat.is_le(R.l_i1(l), R.lane_newest(R.nth_lane(ls, src)))
+
+def bumps_fresh(+ls: List<&2, R.Lane>, ps: List<&2, R.Proj>, +e: Nat) -> Bool:
+  match ps:
+    case Nil{}:
+      True{}
+    case +h <> t:
+      Bool.and(line_fresh(ls, route_bump(ls, h, e), R.proj_src(h)),
+               bumps_fresh(ls, t, e))

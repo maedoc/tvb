@@ -208,7 +208,8 @@ def lanes_step(ls: List<&2, Lane>) -> List<&2, Lane>:
 def nth_lane(ls: List<&2, Lane>, i: Nat) -> Lane:
   match ls i:
     case Nil{} _:
-      Lane{1n, 0n, 0n}   # unreachable under ok(cfg); the validator bounds src
+      Lane{1n, 0n, 0n}   # unreachable under ok(cfg) once src < nlanes: the
+                         # proj_src_bounded + nth_init_* laws (LAWS_router)
     case h <> t 0n:
       h
     case h <> t 1n+p:
