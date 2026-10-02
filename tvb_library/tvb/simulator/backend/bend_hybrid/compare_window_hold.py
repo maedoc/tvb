@@ -279,6 +279,29 @@ def tick_py(ls: list[Lane], ps: list[tuple]) -> tuple:
     return (stepped, [route_proj_py(stepped, p) for p in ps])
 
 
+def check_macro_degenerate(limit: int = 12) -> int:
+    """macro_degenerate: at k=1 the macro-first read (d=1, own fraction)
+    is the staggered point read i0 = t-1, with fraction identically 0.
+
+    The macro policy routes slow->fast reads at d=1 with fraction
+    num/den = phase/k; at k=1 the lane has no phase (always due), so
+    route_read(t, 1, 0, 1, win) == Line{t-1, t, 0, 1, win} -- exactly
+    the staggered degenerate_read formula i0 = t-d at d=1.
+    """
+    bad = 0
+    for t in range(limit):
+        lane = steps(t, Lane(1, 0, 0))
+        num = sub(sub(lane.k, 1), lane.left)  # lane_num at k=1: always 0
+        line = route_read_py(lane.newest, 1, num, lane.k, 0)
+        if num != 0:
+            print(f"FAIL macro_degenerate t={t}: fraction {num} != 0")
+            bad += 1
+        if line[0] != sub(t, 1):  # Nat.sub saturates: t=0 gives 0
+            print(f"FAIL macro_degenerate t={t}: i0 {line[0]} != {sub(t, 1)}")
+            bad += 1
+    return bad
+
+
 def check_tick_split(limit: int = 5) -> int:
     """tick_split: ticks(a+b) == ticks(b) after ticks(a); chunk safety."""
     bad = 0
@@ -319,6 +342,7 @@ def main() -> int:
     bad += check_delay_injective()
     bad += check_staleness()
     bad += check_window_ordered()
+    bad += check_macro_degenerate()
     bad += check_lanes_step_local()
     bad += check_route_pointwise()
     bad += check_tick_split()

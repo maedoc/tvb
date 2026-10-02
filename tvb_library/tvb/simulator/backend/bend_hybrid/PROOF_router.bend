@@ -1270,3 +1270,23 @@ def tick_split_go(a: Nat, +ls: List<&2, R.Lane>, +ps: List<&2, R.Proj>,
 
 def Laws.tick_split(ls, ps, a, b):
   tick_split_go(a, ls, ps, b)
+
+# macro_degenerate: at k=1 the macro-first read (d=1, fraction 0/1) is
+# the staggered point read.  steps(t, Lane{1,0,0}) keeps newest = t
+# (lane_newest_k1 at n=0), so the goal reduces to
+#   i0(route_read(t, 1, 0, 1, win)) == t - 0 = t
+# and route_read at d=1n+0n answers Line{t-1, t, ...}: both sides are
+# structural reflexivity after one unfolding of route_read's d=1+dp
+# branch at dp=0 and Laws.sub_zero.
+def macro_degenerate_go(+t: Nat, +win: Nat)
+  -> {R.l_i0(R.route_read(R.lane_newest(R.steps(t, R.Lane{1n, 0n, 0n})),
+                          1n, R.lane_num(R.steps(t, R.Lane{1n, 0n, 0n})),
+                          1n, win))
+        == Nat.sub(t, 1n) : Nat}:
+  %Equal.sym(Nat, R.lane_newest(R.steps(t, R.Lane{1n, 0n, 0n})), t,
+             newest_k1_t(t))
+    : {Nat.sub(_, 1n) == Nat.sub(t, 1n) : Nat}
+  {==}
+
+def Laws.macro_degenerate(t, win):
+  macro_degenerate_go(t, win)

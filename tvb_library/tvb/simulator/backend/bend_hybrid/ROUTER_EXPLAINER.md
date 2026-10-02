@@ -2,7 +2,7 @@
 
 *v2 — expanded: the full law catalogue, routing policies as schedules, sequence diagrams, and the first verified kernel leaf. How the tvb-kh hybrid simulator was re-cast as a verified router, in Bend 2.0.*
 
-**TL;DR.** A TVB hybrid simulation — heterogeneous subnetworks, inter-/intra-projections, monitors, stimuli, multi-rate timesteps — fails in ways that are *structural*, not numerical: a delay outside the history horizon, two projections writing the same coupling slot, a zero-delay read off the end of the ring, a regrouped float sum. We rebuilt the *scheduling and routing* of the simulator as a pure program over natural numbers, stated its correctness as **85 machine-checked laws**, and let the floats be payload — until the last layer, where floats return as *operator-order contracts* (which is exactly what IEEE-754 rounding is). The router that decides *what* the kernel reads and writes, *when*, is proved; the kernel that computes is differential-tested; five negative controls keep the laws honest.
+**TL;DR.** A TVB hybrid simulation — heterogeneous subnetworks, inter-/intra-projections, monitors, stimuli, multi-rate timesteps — fails in ways that are *structural*, not numerical: a delay outside the history horizon, two projections writing the same coupling slot, a zero-delay read off the end of the ring, a regrouped float sum. We rebuilt the *scheduling and routing* of the simulator as a pure program over natural numbers, stated its correctness as **86 machine-checked laws**, and let the floats be payload — until the last layer, where floats return as *operator-order contracts* (which is exactly what IEEE-754 rounding is). The router that decides *what* the kernel reads and writes, *when*, is proved; the kernel that computes is differential-tested; five negative controls keep the laws honest.
 
 Everything below is running code: `bend PROOF_router.bend --verdict` re-checks every proof with a small Lean-proved kernel, and the gate (`tests/run_router.sh`) also runs the negative controls and pinned functional tests.
 
@@ -107,7 +107,7 @@ Two properties make this function trustworthy rather than merely plausible:
 
 Below zero, saturating subtraction lands on sample 0 — the initial-condition fill, exactly like the engines' pre-filled rings (nb_hybrid broadcasts the IC across all horizon slots).
 
-## 5. The law catalogue (85, proved)
+## 5. The law catalogue (86, proved)
 
 Laws follow the Bend convention: `LAWS_router.bend` is the human-owned *claims*, `PROOF_router.bend` the discharge; `bend PROOF_router.bend --verdict` re-checks with a Lean-proved kernel. Grouped:
 
@@ -248,7 +248,7 @@ Crucially, **no new routing primitives were needed**: the macro-first read is th
 |---|---|---|---|---|
 | staggered ZOH | clamp (`d=0`) | single-slot point | fast reads lagged | `clamp_necessary`, `read_fresh` |
 | staggered interpolated (current tvb-kh) | lagged 2-point, `d≥1` | single-slot point | fast reads ≤ 1 source step behind | `read_fresh`, `degenerate_read` |
-| macro-first co-sim | interpolated, no lag (`d=1` + phase) | **window average** (Q2) | slow input one window behind | `read_fresh`, `window` laws |
+| macro-first co-sim | interpolated, no lag (`d=1` + phase) | **window average** (Q2) | slow input one window behind | `read_fresh`, `window` laws, `macro_degenerate` (k=1 ⟹ staggered) |
 
 What is *not* a law in any of these: whether interpolation is **accurate** (error propagation across macro windows, energy drift in co-simulation). That is convergence territory — tested numerically, never proved here. The laws certify the messages arrive correctly; the numbers' quality is the differential harness's job.
 
@@ -326,7 +326,7 @@ The negative controls are non-negotiable discipline: the hand-rolled ordering de
 
 ## 11. Where this goes next
 
-- **More policies, more theorems.** The macro-first schedule needs its own degenerate-gate law (k=1 ⟹ collapses to the staggered loop) and a necessity law for the slow-side one-window coupling lag — the dual of `clamp_necessary`.
+- **More policies, more theorems.** The macro-first degenerate gate is proved (`macro_degenerate`: at k=1 the co-simulation read IS the staggered point read, fraction identically 0). Still open: a necessity law for the slow-side one-window coupling lag — the dual of `clamp_necessary`.
 - **The subtraction library.** `sub_add_cancel`, `sub_add_r` and `add_comm`/`add_assoc` (proved) unlocked the staleness bound (Q1's "up to k−1 ticks stale" as a theorem — `stale_bound` is proved), delay injectivity within the ring, and the quantified window-span law. The next bricks worth proving: `sub_le_mono`'s strict sibling `sub_lt_mono` (a dual of `delay_injective`) and a `div_mod` pair to retire carried counters in favour of closed forms — deferred: the counters make every schedule law a plain induction, which is the cheaper debt.
 - **History as F32 trees** (the tinygrad-in-Bend pattern): forkable, shareable across parallel branches, the GPU-port representation — with tree-depth induction laws like *an IC-region read returns the initial-condition leaf, for any depth and config*.
 - **The property harness.** Random configurations attacking `ok`/`csr_ok` from the Python side, cross-checked against the backend's own validation.

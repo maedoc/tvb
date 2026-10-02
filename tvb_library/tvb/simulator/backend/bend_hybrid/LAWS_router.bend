@@ -811,3 +811,35 @@ law tick_split:
   for b: Nat
   {R.ticks(Nat.add(a, b), ls, ps)
       == R.ticks(b, R.tick_lanes(R.ticks(a, ls, ps)), ps) : R.Tick}
+
+# --------------------------------------------------------------------------
+# 3d. the macro-first degenerate gate: k=1 collapses to the staggered loop
+# --------------------------------------------------------------------------
+# The macro-first (co-simulation) policy routes slow->fast reads at d=1
+# with the interpolation fraction num/den = r/k (phase r within the macro
+# window), and fast->slow input as the window average.  The staggered
+# policy, at k=1, routes every read as the point read i0 = t - d.
+# This law is the GATE between the two: at k=1 the macro-first read --
+# d=1, fraction num/den -- IS the staggered point read, because a k=1
+# lane has no phase (its countdown is always 0, it is always due, every
+# tick publishes) and the interpolation fraction is 0/1 = 0.
+#
+# In router terms: at k=1, lane_num(l) = (k-1) - left = 0 - 0 = 0, so
+# the macro-first read -- route_read at d=1 with the lane's OWN fraction
+# -- answers Line{t-1, t, 0, 1, win}: i0 = t-1, which is exactly the
+# staggered degenerate_read formula i0 = t-d at d=1.  The fraction the
+# macro policy would interpolate with is identically 0: no interpolation
+# exists to be missed, and the two orderings read the same samples.
+#
+# This is the promise of the routing table (explainer section 7): the
+# macro-first policy, run on an all-k=1 network, does not drift from
+# the staggered policy -- the SAME router state serves both, and the
+# golden rule ("all k=1 must stay bit-for-bit") holds at the READ level
+# for the co-simulation ordering too, not just the staggered one.
+law macro_degenerate:
+  for +t: Nat
+  for +win: Nat
+  {R.l_i0(R.route_read(R.lane_newest(R.steps(t, R.Lane{1n, 0n, 0n})),
+                        1n, R.lane_num(R.steps(t, R.Lane{1n, 0n, 0n})),
+                        1n, win))
+      == Nat.sub(t, 1n) : Nat}
