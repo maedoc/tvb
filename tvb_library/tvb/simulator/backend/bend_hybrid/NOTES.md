@@ -160,3 +160,52 @@ companion.
   srcbuf), not global; coupling+stimulus are computed EVERY master tick but
   consumed only at due ticks (odd-tick values feed only ctavg); noise is
   master-grid indexed (subsampled for slow lanes).
+
+## JSON ingress (2026-10-02, third session)
+
+- `json_ingest.bend` decodes a strict JSON subset to `R.Config` AT RUNTIME
+  (total decode: garbage -> empty default), `json_good` gates on parse-valid
+  AND `R.ok`; `json_demo.bend` is the compiled binary ingesting argv JSON;
+  laws `LAWS_json.bend` / proofs `PROOF_json.bend`; gate `tests/run_json.sh`
+  (verdict + negative controls + pinned runtime outputs).
+- Headline law `json_delay_plateau: for +s: String ...` -- the delay
+  plateau (all delays past the history coincide on the IC read; the router
+  saturates, never wraps) holds for EVERY string, hence every runtime JSON
+  config.  `bad/bad_wrap.bend` (claims ring-wrap) and `bad/bad_json_time.bend`
+  (claims the plateau is tick-invariant -- it is not; the phase moves) must
+  both fail.
+- NEW SYNTAX FACTS (all verified by test, several contradict earlier notes):
+  - **No forward references and no mutual recursion in user files.**  A
+    `law` declaration does NOT let live code call a name whose `def` comes
+    later -- even Base's `String.cmp.rec/fin/cmp` pattern fails when copied
+    verbatim (base.bend is prelude-privileged).  Call graphs must be DAGs,
+    define-before-use top to bottom.
+  - THE workaround: ONE self-recursive spine + pure helpers that return
+    DATA and never call back.  Multi-scrutinee `match ts m:` dispatches on
+    (stream, state) at once; computed discriminants are passed as ARGUMENTS
+    to the recursive call and matched next round (where they are params).
+  - Flat multi-cons patterns with NESTED constructor heads work:
+    `case TStr{k2} <> TColon{} <> TBrackO{} <> t 0n:` -- as do simple nested
+    cons patterns `case TNum{val} <> t:` (the old "nested constructor
+    patterns in cons forbidden" note is too strong).
+  - Nat literal patterns (`case 2n:`) and wildcards (`case _:`,
+    `case _ _:`) work -- cheap multi-way dispatch.
+  - A destructuring let (`K{x} = v`) only destructures PARAMETERS and
+    pattern bindings, never a computed value (call result): "a match cannot
+    scrutinize a computed value: give it its own def".  Thread records
+    WHOLE through helpers and use accessors.
+  - A pattern binder used twice in one arm needs `+` IN THE PATTERN:
+    `case +h <> t:`.  Cross-arm reuse of a plain binder is fine.
+  - `String.eq` exists, `String.is_eq` does NOT (the naming scheme lies);
+    `Cmp.show`, `Nat.show`, `Bool.show` all exist.  `\"` escapes work in
+    string literals.  `U32` params accept `+`.
+  - Instance laws whose proof is `{==}` over a big literal parse work fine:
+    primitives compute on literal args (the tier-2 "literals pin
+    transcription" tier at the PROOF level).
+- What the ingress story answers: proofs quantified over the full value
+  space (String/Nat/Config) survive arbitrary runtime JSON unchanged; what
+  does NOT transfer is anything only instance-pinned (`ok`/`csr_ok` laws)
+  or outside the trusted core (the U32 char handling in the tokenizer, the
+  Bend->C codegen).  Next: the `ok(c) == True` -> P law family (E19's
+  theorem half) and the Python property harness attacking the decoder+ok
+  boundary.
