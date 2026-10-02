@@ -647,3 +647,30 @@ def window_span_go(+n: Nat, +d: Nat, +w: Nat, h: R.le_ok(Nat.add(d, w), n))
 
 def Laws.window_span(n, d, w, h):
   window_span_go(n, d, w, h)
+
+# Q1 hold half: t < left+1 ticks from countdown left hold newest.  The
+# induction peels ticks while the countdown is a successor, and the witness
+# reduces definitionally as left shrinks; when t=0 the claim is reflexive.
+
+# is_lt(p, 0n) is absurd for any p: once p is destructed the cmp reduces to
+# GT (or EQ for 0), so the hypothesis becomes False == True; refute any goal.
+def lt_zero_absurd(p: Nat, -A: Type, h: {Nat.is_lt(p, 0n) == True{} : Bool}) -> A:
+  match p:
+    case 0n:
+      Bool.fne(A, h)
+    case 1n+q:
+      Bool.fne(A, h)
+
+def hold_until_due_go(t: Nat, +k: Nat, left: Nat, +n: Nat,
+                      h: {Nat.is_lt(t, Nat.add(left, 1n)) == True{} : Bool})
+    -> {R.lane_newest(R.steps(t, R.Lane{k, left, n})) == n : Nat}:
+  match t left:
+    case 0n _:
+      {==}
+    case 1n+p 0n:
+      lt_zero_absurd(p, {R.lane_newest(R.steps(1n+p, R.Lane{k, 0n, n})) == n : Nat}, h)
+    case 1n+p 1n+q:
+      hold_until_due_go(p, k, q, n, h)
+
+def Laws.hold_until_due(t, k, left, n, h):
+  hold_until_due_go(t, k, left, n, h)

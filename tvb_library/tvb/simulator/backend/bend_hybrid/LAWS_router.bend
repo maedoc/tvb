@@ -473,3 +473,18 @@ law le_add_one:
 law sub_zero_r:
   for n: Nat
   {Nat.sub(n, 0n) == n : Nat}
+
+# Q1 hold half, quantified: from countdown position left, any t < left+1
+# master ticks HOLD the newest sample (ZOH: publishes land exactly on the
+# due date, never between).  This is the staleness story's flip side -- a
+# k-period lane publishes once per k ticks, so no read is ever more than
+# k-1 ticks behind the master; the read half (age <= k-1) follows from this
+# plus period_from_init.  Proof: induction on t, peeling one tick each
+# step; the countdown shrinks toward the due date, never hitting 0 early.
+law hold_until_due:
+  for t: Nat
+  for +k: Nat
+  for left: Nat
+  for +n: Nat
+  for +h: {Nat.is_lt(t, Nat.add(left, 1n)) == True{} : Bool}
+  {R.lane_newest(R.steps(t, R.Lane{k, left, n})) == n : Nat}
