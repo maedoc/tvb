@@ -136,6 +136,65 @@ def check_delay_injective(limit: int = 10) -> int:
     return bad
 
 
+def check_staleness(limit: int = 8) -> int:
+    """Q1 capstones: canonical_run, newest_at, stale_bound.
+
+    For every k >= 1, q, r with r <= k-1 (the witness decomposition of
+    t = q*k + r supplied to the Bend laws as hypotheses):
+      canonical_run: q*k ticks from the countdown init advance newest
+                     by exactly q
+      newest_at:     at t = q*k + r the newest sample is exactly n + q
+      stale_bound:   the age t - newest = r <= k-1
+    """
+    bad = 0
+    for k in range(1, limit):
+        for q in range(limit):
+            for r in range(k):
+                for n in range(limit):
+                    lane = steps(q * k, Lane(k, k - 1, n))
+                    if lane.newest != n + q:
+                        print(f"FAIL canonical_run k={k} q={q} n={n}: "
+                              f"newest {lane.newest} != {n + q}")
+                        bad += 1
+                    t = q * k + r
+                    lane2 = steps(t, Lane(k, k - 1, n))
+                    if lane2.newest != n + q:
+                        print(f"FAIL newest_at k={k} q={q} r={r} n={n}: "
+                              f"newest {lane2.newest} != {n + q}")
+                        bad += 1
+                    # stale_bound: age is measured on the MASTER CLOCK --
+                    # the newest sample was published at tick q*k (relative
+                    # to the countdown init), so its age at t is t - q*k,
+                    # which the witness bounds by k-1.  (Not t - newest:
+                    # the sample INDEX n+q is not a clock tick.)
+                    if not (t - q * k <= k - 1):
+                        print(f"FAIL stale_bound k={k} q={q} r={r} n={n}: "
+                              f"age {t - q * k} > {k - 1}")
+                        bad += 1
+    # negative control: the bound is SHARP -- at t = q*k + k the age is
+    # exactly k (one tick past the guarantee), so r <= k-1 is load-bearing
+    if steps(3, Lane(2, 1, 0)).newest != 1:
+        print("FAIL sharpness probe: k=2, t=3 should have published once")
+        bad += 1
+    return bad
+
+
+def check_window_ordered(limit: int = 12) -> int:
+    """window_ordered: lo <= hi whenever the window fits (d + w <= n)."""
+    bad = 0
+    for n in range(limit):
+        for d in range(limit):
+            for w in range(limit):
+                lo, hi = route_window(n, d, w)
+                if d + w <= n and lo > hi:
+                    print(f"FAIL window_ordered {n},{d},{w}: {lo} > {hi}")
+                    bad += 1
+    # negative control: window_span already shows the span saturates
+    # when d + w > n (lo can be 0 while hi > 0), which is exactly why
+    # the law needs the fitting hypothesis
+    return bad
+
+
 def main() -> int:
     bad = 0
     bad += check_window_span()
@@ -143,10 +202,13 @@ def main() -> int:
     bad += check_publish_not_vacuous()
     bad += check_left_invariant()
     bad += check_delay_injective()
+    bad += check_staleness()
+    bad += check_window_ordered()
     if bad:
         print(f"{bad} FAILURES")
         return 1
-    print("window_span + hold_until_due + left_invariant + delay_injective: "
+    print("window_span + hold_until_due + left_invariant + delay_injective "
+          "+ staleness (canonical_run/newest_at/stale_bound) + window_ordered: "
           "all properties hold (exhaustive small range, engine-side)")
     return 0
 

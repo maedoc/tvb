@@ -939,3 +939,260 @@ def Laws.nth_init_zero(k, ks):
 
 def Laws.nth_init_succ(k, ks, i):
   {==}
+
+# --------------------------------------------------------------------------
+# 0e. add/mul rearrangement bricks (for the Q1 staleness capstones)
+# --------------------------------------------------------------------------
+# a + b == b + a by induction on a, peeling one succ at a time to the
+# front of the RIGHT operand via the flipped add_succ.
+def add_comm_go(a: Nat, +b: Nat) -> {Nat.add(a, b) == Nat.add(b, a) : Nat}:
+  match a:
+    case 0n:
+      Equal.sym(Nat, Nat.add(b, 0n), b, Laws.add_zero(b))
+    case 1n++p:
+      %Equal.sym(Nat, Nat.add(p, b), Nat.add(b, p), add_comm_go(p, b))
+        : {1n+_ == Nat.add(b, 1n+p) : Nat}
+      %Equal.sym(Nat, Nat.add(b, 1n+p), 1n+Nat.add(b, p), Laws.add_succ(b, p))
+        : {1n+Nat.add(b, p) == _ : Nat}
+      {==}
+
+# (a + b) + c == a + (b + c) by induction on a (both sides peel in sync)
+def add_assoc_go(a: Nat, +b: Nat, +c: Nat)
+    -> {Nat.add(Nat.add(a, b), c) == Nat.add(a, Nat.add(b, c)) : Nat}:
+  match a:
+    case 0n:
+      {==}
+    case 1n++p:
+      Equal.cong(Nat, Nat, z => 1n+z, Nat.add(Nat.add(p, b), c),
+                 Nat.add(p, Nat.add(b, c)), add_assoc_go(p, b, c))
+
+def Laws.add_comm(a, b):
+  add_comm_go(a, b)
+
+def Laws.add_assoc(a, b, c):
+  add_assoc_go(a, b, c)
+
+# (a + b) - a == b by induction on a: both sides lose one succ per peel.
+# The affinely-correct shape: a is the induction variable (used twice
+# above, but each use is a distinct -binder pattern split, so the peel is
+# on the live first argument and the step case recurses with one less).
+def sub_add_r_go(a: Nat, +b: Nat) -> {Nat.sub(Nat.add(a, b), a) == b : Nat}:
+  match a:
+    case 0n:
+      Laws.sub_zero_r(b)
+    case 1n++p:
+      sub_add_r_go(p, b)
+
+def Laws.sub_add_r(a, b):
+  sub_add_r_go(a, b)
+
+# --------------------------------------------------------------------------
+# 1d. the Q1 staleness capstones
+# --------------------------------------------------------------------------
+# canonical_run: q whole periods advance newest by exactly q and return the
+# countdown to its canonical rest position k-1.  Induction on q with the
+# starting count GENERALIZED (the succ case recurses at n+1, one period
+# in).  Nat.mul(1+p, k) reduces to k + p*k, so run_segmentable(k, p*k)
+# peels the NEW period first; period_from_init closes it, and the add_assoc
+# brick regroups n+1+p into (n+1)+p for the induction hypothesis.
+# add(n, 1+p) == add(1+n, p): the successor can be peeled off either
+# operand; the canonical_run induction needs it to hand the lane's count
+# (reduced to 1+n by period_from_init) to the hypothesis-shape add(1+n, p).
+def add_swap_one(+n: Nat, +p: Nat)
+    -> {Nat.add(n, 1n+p) == Nat.add(1n+n, p) : Nat}:
+  Laws.add_succ(n, p)
+
+# the period step for k a KNOWN successor, stated at the countdown's
+# reduced normal form (sub(1+kk, 1n) normalizes to sub(kk, 0n), NOT to
+# kk -- sub is stuck on an abstract first argument).  countdown_publish
+# consumes the countdown directly; the two lane-side normal forms are
+# bridged by sub_zero_r and the tick's two succ-shapes by add_one.
+def period_from_init_pos(+kk: Nat, +n: Nat)
+    -> {R.steps(1n+kk, R.Lane{1n+kk, kk, n})
+          == R.Lane{1n+kk, kk, 1n+n} : R.Lane}:
+  Equal.trans(R.Lane,
+    R.steps(1n+kk, R.Lane{1n+kk, kk, n}),
+    R.steps(Nat.add(kk, 1n), R.Lane{1n+kk, kk, n}),
+    R.Lane{1n+kk, kk, 1n+n},
+    Equal.cong(Nat, R.Lane, z => R.steps(z, R.Lane{1n+kk, kk, n}),
+               1n+kk, Nat.add(kk, 1n),
+               Equal.sym(Nat, Nat.add(kk, 1n), 1n+kk, Laws.add_one(kk))),
+    Equal.trans(R.Lane,
+      R.steps(Nat.add(kk, 1n), R.Lane{1n+kk, kk, n}),
+      R.Lane{1n+kk, Nat.sub(kk, 0n), 1n+n},
+      R.Lane{1n+kk, kk, 1n+n},
+      Laws.countdown_publish(kk, 1n+kk, n),
+      Equal.cong(Nat, R.Lane, z => R.Lane{1n+kk, z, 1n+n},
+                 Nat.sub(kk, 0n), kk, Laws.sub_zero_r(kk))))
+
+# the k >= 1 body, stated structurally at k = 1+kk with the countdown at
+# its reduced normal form kk, so no is_ge witness is passed down the
+# recursion (each level rebuilds it for free from the successor
+# structure).  Induction on q, count generalized.
+def canonical_run_pos(q: Nat, +kk: Nat, +n: Nat)
+    -> {R.steps(Nat.mul(q, 1n+kk), R.Lane{1n+kk, kk, n})
+          == R.Lane{1n+kk, kk, Nat.add(n, q)} : R.Lane}:
+  match q:
+    case 0n:
+      Equal.cong(Nat, R.Lane, z => R.Lane{1n+kk, kk, z}, n, Nat.add(n, 0n),
+                 Equal.sym(Nat, Nat.add(n, 0n), n, Laws.add_zero(n)))
+    case 1n++p:
+      Equal.trans(R.Lane,
+        R.steps(Nat.add(1n+kk, Nat.mul(p, 1n+kk)), R.Lane{1n+kk, kk, n}),
+        R.steps(Nat.mul(p, 1n+kk), R.steps(1n+kk, R.Lane{1n+kk, kk, n})),
+        R.Lane{1n+kk, kk, Nat.add(n, 1n+p)},
+        Laws.run_segmentable(1n+kk, Nat.mul(p, 1n+kk), R.Lane{1n+kk, kk, n}),
+        Equal.trans(R.Lane,
+          R.steps(Nat.mul(p, 1n+kk), R.steps(1n+kk, R.Lane{1n+kk, kk, n})),
+          R.steps(Nat.mul(p, 1n+kk), R.Lane{1n+kk, kk, 1n+n}),
+          R.Lane{1n+kk, kk, Nat.add(n, 1n+p)},
+          Equal.cong(R.Lane, R.Lane, z => R.steps(Nat.mul(p, 1n+kk), z),
+                     R.steps(1n+kk, R.Lane{1n+kk, kk, n}),
+                     R.Lane{1n+kk, kk, 1n+n},
+                     period_from_init_pos(kk, n)),
+          Equal.trans(R.Lane,
+            R.steps(Nat.mul(p, 1n+kk), R.Lane{1n+kk, kk, 1n+n}),
+            R.Lane{1n+kk, kk, Nat.add(1n+n, p)},
+            R.Lane{1n+kk, kk, Nat.add(n, 1n+p)},
+            canonical_run_pos(p, kk, 1n+n),
+            Equal.cong(Nat, R.Lane, z => R.Lane{1n+kk, kk, z},
+                       Nat.add(1n+n, p), Nat.add(n, 1n+p),
+                       Equal.sym(Nat, Nat.add(n, 1n+p), Nat.add(1n+n, p),
+                                 add_swap_one(n, p))))))
+
+# the dispatcher: k = 0 refuted by the ge witness (is_ge(0n, 1n) is
+# False); k = 1+kk delegates to the structural body, bridging the law's
+# countdown shape (sub(1+kk, 1n), normalizing to sub(kk, 0n)) to the
+# body's kk on both sides of the equation.
+def canonical_run_go(q: Nat, +k: Nat, +n: Nat,
+                     h: {Nat.is_ge(k, 1n) == True{} : Bool})
+    -> {R.steps(Nat.mul(q, k), R.Lane{k, Nat.sub(k, 1n), n})
+          == R.Lane{k, Nat.sub(k, 1n), Nat.add(n, q)} : R.Lane}:
+  match k:
+    case 0n:
+      Bool.fne({R.steps(Nat.mul(q, 0n), R.Lane{0n, Nat.sub(0n, 1n), n})
+                  == R.Lane{0n, Nat.sub(0n, 1n), Nat.add(n, q)} : R.Lane}, h)
+    case 1n+kk:
+      Equal.trans(R.Lane,
+        R.steps(Nat.mul(q, 1n+kk), R.Lane{1n+kk, Nat.sub(kk, 0n), n}),
+        R.steps(Nat.mul(q, 1n+kk), R.Lane{1n+kk, kk, n}),
+        R.Lane{1n+kk, Nat.sub(kk, 0n), Nat.add(n, q)},
+        Equal.cong(R.Lane, R.Lane, l => R.steps(Nat.mul(q, 1n+kk), l),
+                   R.Lane{1n+kk, Nat.sub(kk, 0n), n}, R.Lane{1n+kk, kk, n},
+                   Equal.cong(Nat, R.Lane, z => R.Lane{1n+kk, z, n},
+                              Nat.sub(kk, 0n), kk, Laws.sub_zero_r(kk))),
+        Equal.trans(R.Lane,
+          R.steps(Nat.mul(q, 1n+kk), R.Lane{1n+kk, kk, n}),
+          R.Lane{1n+kk, kk, Nat.add(n, q)},
+          R.Lane{1n+kk, Nat.sub(kk, 0n), Nat.add(n, q)},
+          canonical_run_pos(q, kk, n),
+          Equal.cong(Nat, R.Lane, z => R.Lane{1n+kk, z, Nat.add(n, q)},
+                     kk, Nat.sub(kk, 0n),
+                     Equal.sym(Nat, Nat.sub(kk, 0n), kk, Laws.sub_zero_r(kk)))))
+
+def Laws.canonical_run(k, q, n, h):
+  canonical_run_go(q, k, n, h)
+
+# --------------------------------------------------------------------------
+# 1d (cont.). newest_at and stale_bound: the Q1 capstones
+# --------------------------------------------------------------------------
+# newest_at: at t = q*k + r with r <= k-1, the newest sample is exactly
+# n + q.  Split the run at q*k (run_segmentable), advance the whole
+# periods with canonical_run (that half is EXACTLY its conclusion), then
+# hold through the remainder r with hold_until_due -- whose hypothesis
+# r < (k-1) + 1 comes from r <= k-1 by le_lt_succ, and whose countdown
+# argument k-1 is what canonical_run leaves behind.
+# is_le(r, m) gives is_lt(r, m + 1) -- in the ADD normal form
+# (add(m, 1n), the shape hold_until_due's hypothesis normalizes to).
+def lt_succ_add(r: Nat, +m: Nat, h: {Nat.is_le(r, m) == True{} : Bool})
+    -> {Nat.is_lt(r, Nat.add(m, 1n)) == True{} : Bool}:
+  %Equal.sym(Nat, Nat.add(m, 1n), 1n+m, Laws.add_one(m))
+    : {Nat.is_lt(r, _) == True{} : Bool}
+  le_lt_succ(r, m, h)
+
+def newest_at_go(+k: Nat, +q: Nat, +r: Nat, +n: Nat,
+                 h: {Nat.is_ge(k, 1n) == True{} : Bool},
+                 hr: {Nat.is_le(r, Nat.sub(k, 1n)) == True{} : Bool})
+    -> {R.lane_newest(R.steps(Nat.add(Nat.mul(q, k), r), R.Lane{k, Nat.sub(k, 1n), n}))
+          == Nat.add(n, q) : Nat}:
+  %Equal.sym(R.Lane, R.steps(Nat.add(Nat.mul(q, k), r), R.Lane{k, Nat.sub(k, 1n), n}),
+             R.steps(r, R.steps(Nat.mul(q, k), R.Lane{k, Nat.sub(k, 1n), n})),
+             Laws.run_segmentable(Nat.mul(q, k), r, R.Lane{k, Nat.sub(k, 1n), n}))
+    : {R.lane_newest(_) == Nat.add(n, q) : Nat}
+  %Equal.sym(R.Lane, R.steps(Nat.mul(q, k), R.Lane{k, Nat.sub(k, 1n), n}),
+             R.Lane{k, Nat.sub(k, 1n), Nat.add(n, q)},
+             Laws.canonical_run(k, q, n, h))
+    : {R.lane_newest(R.steps(r, _)) == Nat.add(n, q) : Nat}
+  Laws.hold_until_due(r, k, Nat.sub(k, 1n), Nat.add(n, q),
+                      lt_succ_add(r, Nat.sub(k, 1n), hr))
+
+def Laws.newest_at(k, q, r, n, h, hr):
+  newest_at_go(k, q, r, n, h, hr)
+
+# stale_bound: the age of the newest sample at t = q*k + r is the
+# remainder r, which the witness bounds by k-1.  Pure arithmetic: the
+# hypothesis rewrites t into q*k + r, then cancelling the q*k (sub_add_r)
+# leaves exactly r, and hr is the bound.
+def Laws.stale_bound(k, q, r, t, h, hr, ht):
+  %Equal.sym(Nat, t, Nat.add(Nat.mul(q, k), r), ht) : {Nat.is_le(Nat.sub(_, Nat.mul(q, k)), Nat.sub(k, 1n)) == True{} : Bool}
+  %Equal.sym(Nat, Nat.sub(Nat.add(Nat.mul(q, k), r), Nat.mul(q, k)), r,
+             Laws.sub_add_r(Nat.mul(q, k), r))
+    : {Nat.is_le(_, Nat.sub(k, 1n)) == True{} : Bool}
+  hr
+
+# --------------------------------------------------------------------------
+# 3b. the window order laws
+# --------------------------------------------------------------------------
+# sub is antitone (non-strict) in its second argument inside the history:
+# a <= b <= n implies n-b <= n-a.  Same induction skeleton as the strict
+# sub_lt_mono: peel (n, b) in lockstep; a=0 closes by sub_le_self +
+# sub_le_b; the saturated b > n case is refuted by the le_ok witness.
+# sub is antitone (non-strict) in its second argument inside the
+# history: a <= b <= n implies n-b <= n-a.  Same induction skeleton as
+# the strict sub_lt_mono: peel (n, a, b) together; the saturated
+# b > n case is refuted by the le_ok witness; b=0 closes the sub side
+# (nothing cancelled) and a=0 cancels maximally (sub_le_self).
+def sub_le_mono_go2(+n: Nat, +a: Nat, +b: Nat,
+                    h: {Nat.is_le(a, b) == True{} : Bool},
+                    hb: R.le_ok(b, n))
+    -> {Nat.is_le(Nat.sub(n, b), Nat.sub(n, a)) == True{} : Bool}:
+  match n a b:
+    case 0n 0n _:
+      {==}
+    case 0n 1n+r _:
+      {==}
+    case 1n+p 0n 0n:
+      Laws.le_refl_b(Nat.sub(1n+p, 0n))
+    case 1n+p 0n 1n+q:
+      Laws.le_succ_of_le(Nat.sub(p, q), p, Laws.sub_le_b(p, q))
+    case 1n+p 1n+r 0n:
+      Bool.fne({Nat.is_le(Nat.sub(1n+p, 0n), Nat.sub(1n+p, 1n+r)) == True{} : Bool},
+               Bool.fne({Nat.is_le(1n+r, 0n) == True{} : Bool}, h))
+    case 1n+p 1n+r 1n+q:
+      sub_le_mono_go2(p, r, q, h, hb)
+
+def Laws.sub_le_mono(n, a, b, h, hb):
+  sub_le_mono_go2(n, a, b, h, hb)
+
+# window_ordered: the window's ends are in order, lo <= hi, whenever the
+# window fits the history (d + w <= n).  Pure sub_le_mono at a=d, b=d+w
+# (d <= d+w by le_add_one-style step): lo = n-(d+w) <= n-d = hi.
+def le_add_r(+d: Nat, w: Nat) -> {Nat.is_le(d, Nat.add(d, w)) == True{} : Bool}:
+  match w:
+    case 0n:
+      %Equal.sym(Nat, Nat.add(d, 0n), d, Laws.add_zero(d))
+        : {Nat.is_le(d, _) == True{} : Bool}
+      Laws.le_refl_b(d)
+    case 1n++q:
+      %Equal.sym(Nat, Nat.add(d, 1n+q), Nat.add(1n+d, q), add_swap_one(d, q))
+        : {Nat.is_le(d, _) == True{} : Bool}
+      Laws.le_succ_of_le(d, Nat.add(d, q), le_add_r(d, q))
+
+def window_ordered_go(n: Nat, +d: Nat, +w: Nat,
+                       h: R.le_ok(Nat.add(d, w), n))
+    -> {Nat.is_le(R.win_lo(R.route_window(n, d, w)),
+                             R.win_hi(R.route_window(n, d, w))) == True{} : Bool}:
+  sub_le_mono_go2(n, d, Nat.add(d, w), le_add_r(d, w), h)
+
+def Laws.window_ordered(n, d, w, h):
+  window_ordered_go(n, d, w, h)

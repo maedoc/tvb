@@ -2,7 +2,7 @@
 
 *v2 — expanded: the full law catalogue, routing policies as schedules, sequence diagrams, and the first verified kernel leaf. How the tvb-kh hybrid simulator was re-cast as a verified router, in Bend 2.0.*
 
-**TL;DR.** A TVB hybrid simulation — heterogeneous subnetworks, inter-/intra-projections, monitors, stimuli, multi-rate timesteps — fails in ways that are *structural*, not numerical: a delay outside the history horizon, two projections writing the same coupling slot, a zero-delay read off the end of the ring, a regrouped float sum. We rebuilt the *scheduling and routing* of the simulator as a pure program over natural numbers, stated its correctness as **36 machine-checked laws**, and let the floats be payload — until the last layer, where floats return as *operator-order contracts* (which is exactly what IEEE-754 rounding is). The router that decides *what* the kernel reads and writes, *when*, is proved; the kernel that computes is differential-tested; five negative controls keep the laws honest.
+**TL;DR.** A TVB hybrid simulation — heterogeneous subnetworks, inter-/intra-projections, monitors, stimuli, multi-rate timesteps — fails in ways that are *structural*, not numerical: a delay outside the history horizon, two projections writing the same coupling slot, a zero-delay read off the end of the ring, a regrouped float sum. We rebuilt the *scheduling and routing* of the simulator as a pure program over natural numbers, stated its correctness as **82 machine-checked laws**, and let the floats be payload — until the last layer, where floats return as *operator-order contracts* (which is exactly what IEEE-754 rounding is). The router that decides *what* the kernel reads and writes, *when*, is proved; the kernel that computes is differential-tested; five negative controls keep the laws honest.
 
 Everything below is running code: `bend PROOF_router.bend --verdict` re-checks every proof with a small Lean-proved kernel, and the gate (`tests/run_router.sh`) also runs the negative controls and pinned functional tests.
 
@@ -107,13 +107,13 @@ Two properties make this function trustworthy rather than merely plausible:
 
 Below zero, saturating subtraction lands on sample 0 — the initial-condition fill, exactly like the engines' pre-filled rings (nb_hybrid broadcasts the IC across all horizon slots).
 
-## 5. The law catalogue (36, proved)
+## 5. The law catalogue (82, proved)
 
 Laws follow the Bend convention: `LAWS_router.bend` is the human-owned *claims*, `PROOF_router.bend` the discharge; `bend PROOF_router.bend --verdict` re-checks with a Lean-proved kernel. Grouped:
 
 **Arithmetic bricks** (proved once, reused): `sub_zero`, `add_zero`, `add_succ`, `add_one`, `add_sub_succ`, `sub_add_cancel`, `le_refl_b`, `le_succ_b`, `le_succ_of_le`, `sub_le_b`, `lt_succ_b`, `eq_refl_b`, `ne_succ`.
 
-**Schedule**: `lane_newest_k1` (a period-1 lane publishes exactly once per tick), `lane_k_preserved`, `lane_phase_bound` (the interpolation fraction is always proper — this is where k ≥ 1 lives, as a *hypothesis* an invalid config cannot supply), `lane_monotone` (publication never regresses).
+**Schedule**: `lane_newest_k1` (a period-1 lane publishes exactly once per tick), `lane_k_preserved`, `lane_phase_bound` (the interpolation fraction is always proper — this is where k ≥ 1 lives, as a *hypothesis* an invalid config cannot supply), `lane_monotone` (publication never regresses), and — new — the **Q1 staleness capstones**: `canonical_run` (q·k ticks from the countdown init advance `newest` by exactly q — the whole periodic run in one equation, no div/mod), `newest_at` (at t = q·k + r with r ≤ k−1 the newest sample is exactly n+q), `stale_bound` (the age of the newest sample at t is the remainder r ≤ k−1: the "up to k−1 ticks stale" prose as a theorem), plus `window_ordered` / `sub_le_mono` (a window that fits the history has its ends in order; sub is antitone).
 
 **Control flow** — these are the main loop's own comments, promoted:
 
@@ -144,6 +144,7 @@ flowchart LR
         F5["delay outside<br/>history horizon"]
         F6["invalid config<br/>reaches the sweep"]
         F7["float sum silently<br/>regrouped / reordered"]
+        F8["sample read as fresh<br/>but actually stale"]
     end
     subgraph LAWS["laws"]
         L1["read_fresh +<br/>clamp_necessary"]
@@ -153,6 +154,7 @@ flowchart LR
         L5["checked_read witness<br/>(le_ok d ≤ n)"]
         L6["ok + csr_ok +<br/>negative controls"]
         L7["blend_order +<br/>gather_cons"]
+        L8["stale_bound +<br/>newest_at"]
     end
     F1 --> L1
     F2 --> L2
@@ -161,6 +163,7 @@ flowchart LR
     F5 --> L5
     F6 --> L6
     F7 --> L7
+    F8 --> L8
 ```
 
 ## 6. Sequence diagrams: how the laws cover the tick loop
@@ -322,7 +325,7 @@ The negative controls are non-negotiable discipline: the hand-rolled ordering de
 ## 11. Where this goes next
 
 - **More policies, more theorems.** The macro-first schedule needs its own degenerate-gate law (k=1 ⟹ collapses to the staggered loop) and a necessity law for the slow-side one-window coupling lag — the dual of `clamp_necessary`.
-- **The subtraction library.** `sub_add_cancel` (proved) unlocks the staleness bound (Q1's "up to k−1 ticks stale" as a theorem), delay injectivity within the ring, and the quantified window-span law.
+- **The subtraction library.** `sub_add_cancel`, `sub_add_r` and `add_comm`/`add_assoc` (proved) unlocked the staleness bound (Q1's "up to k−1 ticks stale" as a theorem — `stale_bound` is proved), delay injectivity within the ring, and the quantified window-span law. The next bricks worth proving: `sub_le_mono`'s strict sibling `sub_lt_mono` (a dual of `delay_injective`) and a `div_mod` pair to retire carried counters in favour of closed forms — deferred: the counters make every schedule law a plain induction, which is the cheaper debt.
 - **History as F32 trees** (the tinygrad-in-Bend pattern): forkable, shareable across parallel branches, the GPU-port representation — with tree-depth induction laws like *an IC-region read returns the initial-condition leaf, for any depth and config*.
 - **The property harness.** Random configurations attacking `ok`/`csr_ok` from the Python side, cross-checked against the backend's own validation.
 

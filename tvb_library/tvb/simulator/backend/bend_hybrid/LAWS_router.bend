@@ -633,3 +633,126 @@ law nth_init_succ:
   for +ks: List<&2, Nat>
   for i: Nat
   {R.nth_lane(R.init_lanes(k <> ks), 1n+i) == R.nth_lane(R.init_lanes(ks), i) : R.Lane}
+
+# --------------------------------------------------------------------------
+# 0e. the add/mul rearrangement bricks (for the Q1 staleness capstones)
+# --------------------------------------------------------------------------
+# Addition commutes.  Needed because run_segmentable peels the FIRST addend
+# (steps(a+b) = steps(b, steps(a))) while canonical periods are counted in
+# the SECOND (t = q*k + r: peel the whole periods, then the remainder).
+# Base has Word.add_comm but not Nat.add_comm; this is that, for Nat.
+law add_comm:
+  for a: Nat
+  for b: Nat
+  {Nat.add(a, b) == Nat.add(b, a) : Nat}
+
+# Addition associates.  With add_comm this lets any sum of periods, counts
+# and remainders be regrouped into the shape run_segmentable consumes.
+law add_assoc:
+  for a: Nat
+  for b: Nat
+  for c: Nat
+  {Nat.add(Nat.add(a, b), c) == Nat.add(a, Nat.add(b, c)) : Nat}
+
+# (a + b) - a == b: cancelling the FIRST addend of a sum.  The mirror image
+# of sub_add_cancel (which cancels the second under d <= n); this one holds
+# unconditionally because a + b >= a always.  It is the arithmetic heart of
+# stale_bound: the age t - (publication tick) is the remainder r after
+# cancelling the whole periods q*k common to both.
+law sub_add_r:
+  for a: Nat
+  for b: Nat
+  {Nat.sub(Nat.add(a, b), a) == b : Nat}
+
+# --------------------------------------------------------------------------
+# 1d. the Q1 staleness capstones (the "up to k-1 ticks stale" theorem)
+# --------------------------------------------------------------------------
+# The prose (ROUTER_EXPLAINER section 6, the parity audit's Q1): a k-period
+# lane in macro-first stepping publishes once per k master ticks, so the
+# sample a projection reads is never more than k-1 master ticks old.
+# LAWS_router:150 promised this as "the staleness bound (Q1's 'up to k-1
+# ticks stale') as a theorem" once the subtraction library existed; the
+# library (sub_add_cancel, hold_until_due, left_invariant) is now complete,
+# so here is the bound, in two halves.
+#
+# The div/mod-free method: the template would say "newest = t div k" and
+# "age = t mod k".  We cannot say that (Nat.div is not in the provable
+# world), so the laws are stated over the WITNESS of the decomposition:
+# t is quantified as q*k + r with r <= k-1, which every t has and the
+# caller produces.  No division, no modulus -- just the recurrence.
+#
+# Half 1, canonical_run: q WHOLE periods advance the publication count by
+# exactly q, from any IC offset n.  This is period_from_init iterated:
+# period_from_init is one period; run_segmentable chains them; add_comm
+# lines the sum up.  After q*k ticks the lane is back at the canonical
+# countdown k-1 -- the phase is a fixed point of the period.
+law canonical_run:
+  for +k: Nat
+  for q: Nat
+  for +n: Nat
+  for +h: {Nat.is_ge(k, 1n) == True{} : Bool}
+  {R.steps(Nat.mul(q, k), R.Lane{k, Nat.sub(k, 1n), n})
+     == R.Lane{k, Nat.sub(k, 1n), Nat.add(n, q)} : R.Lane}
+
+# Half 2, newest_at: THE publish count.  At master tick t = q*k + r (r the
+# remainder, r <= k-1 so the lane is mid-period) the newest published
+# sample is exactly n + q: q publications for the q whole periods, NONE for
+# the partial one.  Conjoined with stale_bound this is Q1 complete: the
+# count is exact (not just bounded), and the age is the remainder.
+# The negative control bad/bad_count.bend guards the monitor's use of this.
+law newest_at:
+  for +k: Nat
+  for q: Nat
+  for r: Nat
+  for +n: Nat
+  for +h: {Nat.is_ge(k, 1n) == True{} : Bool}
+  for +hr: {Nat.is_le(r, Nat.sub(k, 1n)) == True{} : Bool}
+  {R.lane_newest(R.steps(Nat.add(Nat.mul(q, k), r), R.Lane{k, Nat.sub(k, 1n), n}))
+     == Nat.add(n, q) : Nat}
+
+# stale_bound: the AGE half.  At t = q*k + r the newest sample was
+# published at tick q*k (sample n+j at tick j*k: the IC at 0, then one per
+# period), so its age is exactly the remainder:
+#   t - q*k = r <= k-1.
+# A slow subnet's input is stale, yes -- but never MORE stale than one
+# period minus one, in master ticks.  That is the compensation the
+# anti-alias window pays for (explainer: "you cannot take the
+# interpolation without paying with the window").
+law stale_bound:
+  for +k: Nat
+  for q: Nat
+  for r: Nat
+  for +t: Nat
+  for +h: {Nat.is_ge(k, 1n) == True{} : Bool}
+  for +hr: {Nat.is_le(r, Nat.sub(k, 1n)) == True{} : Bool}
+  for +ht: {t == Nat.add(Nat.mul(q, k), r) : Nat}
+  {Nat.is_le(Nat.sub(t, Nat.mul(q, k)), Nat.sub(k, 1n)) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# 3b. the window's order (the missing half of the Q2 span law)
+# --------------------------------------------------------------------------
+# window_span says the window [lo, hi] has exactly w samples when it fits
+# (d + w <= n); it does NOT alone say lo <= hi -- a consumer averaging
+# over the pair deserves the ends ordered.  Saturating subtraction is
+# antitone in the subtrahend: cancelling d from n leaves more the LESS was
+# cancelled, so n-(d+w) <= n-d always (the saturating case collapses lo to
+# 0, which is <= anything).  Stated under the same fitting witness as
+# window_span for symmetry; sub_le_mono (below) is the antitonicity brick.
+law window_ordered:
+  for n: Nat
+  for +d: Nat
+  for +w: Nat
+  for h: R.le_ok(Nat.add(d, w), n)
+  {Nat.is_le(R.win_lo(R.route_window(n, d, w)),
+             R.win_hi(R.route_window(n, d, w))) == True{} : Bool}
+
+# the antitonicity brick: cancelling more leaves less-or-equal, inside the
+# history (le_ok(b, n) keeps the subtraction honest).  The <= mirror of
+# delay_injective's strict sub_lt_mono; window_ordered is its consumer.
+law sub_le_mono:
+  for n: Nat
+  for a: Nat
+  for b: Nat
+  for h: {Nat.is_le(a, b) == True{} : Bool}
+  for hb: R.le_ok(b, n)
+  {Nat.is_le(Nat.sub(n, b), Nat.sub(n, a)) == True{} : Bool}
