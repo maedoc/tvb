@@ -100,16 +100,54 @@ def check_publish_not_vacuous() -> int:
     return 0
 
 
+def left_next(left: int, k: int) -> int:
+    """router.bend left_next."""
+    if left == 0:
+        return sub(k, 1)
+    return left - 1
+
+
+def check_left_invariant(limit: int = 10) -> int:
+    bad = 0
+    for k in range(1, limit):
+        for left in range(k):  # left <= k-1
+            nxt = left_next(left, k)
+            if not (nxt <= k - 1):
+                print(f"FAIL left_invariant k={k} left={left}: {nxt} > k-1")
+                bad += 1
+    return bad
+
+
+def check_delay_injective(limit: int = 10) -> int:
+    bad = 0
+    for n in range(limit):
+        for a in range(limit):
+            for b in range(a + 1, limit):
+                if b <= n:  # horizon hypothesis le_ok(b, n)
+                    if sub(n, a) == sub(n, b):
+                        print(f"FAIL delay_injective n={n} a={a} b={b}: "
+                              f"aliased slot {sub(n, a)}")
+                        bad += 1
+    # negative control: OUTSIDE the horizon the aliasing is real
+    # (n=0 collapses every delay to sample 0 -- the IC fill)
+    if sub(0, 0) != sub(0, 3):
+        print("FAIL negative control: sub(0,0) != sub(0,3)?")
+        bad += 1
+    return bad
+
+
 def main() -> int:
     bad = 0
     bad += check_window_span()
     bad += check_hold()
     bad += check_publish_not_vacuous()
+    bad += check_left_invariant()
+    bad += check_delay_injective()
     if bad:
         print(f"{bad} FAILURES")
         return 1
-    print("window_span + hold_until_due: all properties hold "
-          "(exhaustive small range, engine-side transcription)")
+    print("window_span + hold_until_due + left_invariant + delay_injective: "
+          "all properties hold (exhaustive small range, engine-side)")
     return 0
 
 

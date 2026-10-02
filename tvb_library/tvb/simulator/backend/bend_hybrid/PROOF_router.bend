@@ -674,3 +674,98 @@ def hold_until_due_go(t: Nat, +k: Nat, left: Nat, +n: Nat,
 
 def Laws.hold_until_due(t, k, left, n, h):
   hold_until_due_go(t, k, left, n, h)
+
+# countdown stays inside [0, k-1]: left=0 resets to k-1 (trivially <= k-1);
+# left=1+q steps down to q, and q <= 1+q <= k-1 by hypothesis transitivity.
+def left_invariant_go(left: Nat, +k: Nat,
+                      h: {Nat.is_le(left, Nat.sub(k, 1n)) == True{} : Bool})
+    -> {Nat.is_le(R.left_next(left, k), Nat.sub(k, 1n)) == True{} : Bool}:
+  match left:
+    case 0n:
+      Laws.le_refl_b(Nat.sub(k, 1n))
+    case 1n+q:
+      match k:
+        case 0n:
+          Bool.fne({Nat.is_le(R.left_next(1n+q, 0n), Nat.sub(0n, 1n)) == True{} : Bool}, h)
+        case 1n+kk:
+          match kk:
+            case 0n:
+              Bool.fne({Nat.is_le(q, 0n) == True{} : Bool}, h)
+            case 1n+r:
+              Laws.le_succ_of_le(q, r, h)
+
+def Laws.left_invariant(left, k, h):
+  left_invariant_go(left, k, h)
+
+# x < y implies x != y (the ne half of lt)
+def lt_imp_ne(x: Nat, y: Nat, h: {Nat.is_lt(x, y) == True{} : Bool})
+    -> {Nat.is_ne(x, y) == True{} : Bool}:
+  match x y:
+    case 0n 0n:
+      Bool.fne({Nat.is_ne(0n, 0n) == True{} : Bool}, h)
+    case 0n 1n+q:
+      {==}
+    case 1n+p 0n:
+      Bool.fne({Nat.is_ne(1n+p, 0n) == True{} : Bool}, h)
+    case 1n+p 1n+q:
+      lt_imp_ne(p, q, h)
+
+# x <= p implies x < 1+p (le strengthens to lt across a successor)
+def le_lt_succ(x: Nat, p: Nat, h: {Nat.is_le(x, p) == True{} : Bool})
+    -> {Nat.is_lt(x, 1n+p) == True{} : Bool}:
+  match x p:
+    case 0n _:
+      {==}
+    case 1n+r 0n:
+      Bool.fne({Nat.is_lt(1n+r, 1n+0n) == True{} : Bool}, h)
+    case 1n+r 1n+s:
+      le_lt_succ(r, s, h)
+
+# sub is strictly antitone in its second argument inside the history:
+# a < b <= n implies n-b < n-a.  Induction on (n, b) with the a=0 case
+# closed by sub_le_self + le_lt_succ.
+def sub_lt_mono(+n: Nat, +a: Nat, +b: Nat,
+               h: {Nat.is_lt(a, b) == True{} : Bool},
+               hb: R.le_ok(b, n))
+    -> {Nat.is_lt(Nat.sub(n, b), Nat.sub(n, a)) == True{} : Bool}:
+  match n a b:
+    case 0n _ 0n:
+      lt_zero_absurd(a, {Nat.is_lt(Nat.sub(0n, 0n), Nat.sub(0n, a)) == True{} : Bool}, h)
+    case 0n _ 1n+q:
+      Empty.absurd({Nat.is_lt(Nat.sub(0n, 1n+q), Nat.sub(0n, a)) == True{} : Bool}, hb)
+    case 1n+p _ 0n:
+      lt_zero_absurd(a, {Nat.is_lt(Nat.sub(1n+p, 0n), Nat.sub(1n+p, a)) == True{} : Bool}, h)
+    case 1n+p 0n 1n+q:
+      le_lt_succ(Nat.sub(p, q), p, Laws.sub_le_self(p, q))
+    case 1n+p 1n+r 1n+q:
+      sub_lt_mono(p, r, q, h, hb)
+
+# delay injectivity: distinct delays inside the history read distinct
+# samples.  Strict antitonicity (sub_lt_mono) gives n-b < n-a, and lt_imp_ne
+# turns the strict order into the disequality.
+# disequality is symmetric (cmp flips EQ-free to EQ-free)
+def ne_symm(x: Nat, y: Nat, h: {Nat.is_ne(x, y) == True{} : Bool})
+    -> {Nat.is_ne(y, x) == True{} : Bool}:
+  match x y:
+    case 0n 0n:
+      Bool.fne({Nat.is_ne(0n, 0n) == True{} : Bool}, h)
+    case 0n 1n+q:
+      {==}
+    case 1n+p 0n:
+      {==}
+    case 1n+p 1n+q:
+      ne_symm(p, q, h)
+
+
+# the go half with +b (Nat is Data, so the reusable binder is legal here);
+# n and a stay affine -- each is used exactly once per call below.
+def delay_inj_go(+n: Nat, +a: Nat, +b: Nat,
+                 h: {Nat.is_lt(a, b) == True{} : Bool},
+                 hb: R.le_ok(b, n))
+    -> {Nat.is_ne(Nat.sub(n, a), Nat.sub(n, b)) == True{} : Bool}:
+  ne_symm(Nat.sub(n, b), Nat.sub(n, a),
+          lt_imp_ne(Nat.sub(n, b), Nat.sub(n, a),
+                    sub_lt_mono(n, a, b, h, hb)))
+
+def Laws.delay_injective(n, a, b, h, hb):
+  delay_inj_go(n, a, b, h, hb)

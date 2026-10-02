@@ -488,3 +488,31 @@ law hold_until_due:
   for +n: Nat
   for +h: {Nat.is_lt(t, Nat.add(left, 1n)) == True{} : Bool}
   {R.lane_newest(R.steps(t, R.Lane{k, left, n})) == n : Nat}
+
+# Q1 staleness invariant, countdown half: a countdown that starts inside
+# [0, k-1] STAYS there after a step (the countdown never escapes its
+# period).  Combined with period_from_init (one publish per period) this
+# yields the staleness bound: a k-period lane's newest sample is at most
+# k-1 master ticks old -- the countdown upper-bounds the remaining hold.
+law left_invariant:
+  for left: Nat
+  for +k: Nat
+  for +h: {Nat.is_le(left, Nat.sub(k, 1n)) == True{} : Bool}
+  {Nat.is_le(R.left_next(left, k), Nat.sub(k, 1n)) == True{} : Bool}
+
+# Q1 delay injectivity, quantified: two DISTINCT delays INSIDE the published
+# history read two DISTINCT source samples -- the map d |-> n - d is
+# injective on d <= n.  This is the routing half of the horizon rule
+# (router.bend's csr comment: "horizon >= max(idelay) + 1 ... would alias
+# two distinct delays onto the same buffer slot"): with saturating sub the
+# aliasing is REAL whenever b > n (n=0 collapses every delay to sample 0,
+# the IC fill), so injectivity needs the horizon hypothesis le_ok(b, n) --
+# exactly what csr_ok enforces per edge.  Inside the horizon, distinct
+# delays stay distinct.
+law delay_injective:
+  for n: Nat
+  for a: Nat
+  for b: Nat
+  for +h: {Nat.is_lt(a, b) == True{} : Bool}
+  for hb: R.le_ok(b, n)
+  {Nat.is_ne(Nat.sub(n, a), Nat.sub(n, b)) == True{} : Bool}
