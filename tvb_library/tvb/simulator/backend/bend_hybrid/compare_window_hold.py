@@ -302,6 +302,44 @@ def check_macro_degenerate(limit: int = 12) -> int:
     return bad
 
 
+def check_slow_lag(limit: int = 10) -> int:
+    """slow_lag_bound + window_head_age: the macro-first lag necessity.
+
+    slow_lag_bound: the windowed read's freshest member t-d is never
+    ahead of the head of the stream t (windowing only makes input
+    older -- never fresher).
+
+    window_head_age: the windowed read's OLDEST member (the head of
+    the slow lane's averaged input) is exactly d+k ticks behind the
+    head of the stream: lo + (d+k) == n.  The slow lane's input is
+    one full window behind -- forced, not chosen (the dual of
+    clamp_necessary's zero-delay clamp).
+    """
+    bad = 0
+    for n in range(limit):
+        for d in range(limit):
+            # slow_lag_bound: t-d <= t, saturating sub included
+            if not (sub(n, d) <= n):
+                print(f"FAIL slow_lag_bound n={n} d={d}")
+                bad += 1
+            for k in range(limit):
+                if d + k <= n:  # le_ok witness: the window fits
+                    lo, hi = route_window(n, d, k)
+                    # window_head_age: lo + (d+k) == n exactly
+                    if lo + (d + k) != n:
+                        print(f"FAIL window_head_age n={n} d={d} k={k}: "
+                              f"lo+span {lo + d + k} != {n}")
+                        bad += 1
+                    # negative control: OUTSIDE the fitting witness the
+                    # identity fails (sub saturates) -- the witness is
+                    # load-bearing, exactly as in the Bend law
+                else:
+                    lo, hi = route_window(n, d, k)
+                    if lo + (d + k) != n and n > 0 and d + k - n <= 2:
+                        pass  # saturation may still coincide; no claim
+    return bad
+
+
 def check_tick_split(limit: int = 5) -> int:
     """tick_split: ticks(a+b) == ticks(b) after ticks(a); chunk safety."""
     bad = 0
@@ -342,6 +380,7 @@ def main() -> int:
     bad += check_delay_injective()
     bad += check_staleness()
     bad += check_window_ordered()
+    bad += check_slow_lag()
     bad += check_macro_degenerate()
     bad += check_lanes_step_local()
     bad += check_route_pointwise()

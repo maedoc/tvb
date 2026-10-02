@@ -1290,3 +1290,28 @@ def macro_degenerate_go(+t: Nat, +win: Nat)
 
 def Laws.macro_degenerate(t, win):
   macro_degenerate_go(t, win)
+
+# --------------------------------------------------------------------------
+# 3e. the slow-side lag necessity laws
+# --------------------------------------------------------------------------
+
+# slow_lag_bound: the windowed read's freshest member t-d is behind the
+# head t -- sub_le_b is exactly this (sub never exceeds its first arg).
+def Laws.slow_lag_bound(t, d):
+  Laws.sub_le_b(t, d)
+
+# window_head_age: the window's head lo = n - (d+k) is EXACTLY d+k
+# # behind the head of the stream: adding the span back cancels to n.
+# route_window(n, d, k) = Win{n - (d+k), n - d}, so the goal is
+#   (n - (d+k)) + (d+k) == n  under le_ok(d+k, n),
+# which is sub_add_cancel with the add_comm/assoc rearrangement.
+def window_head_age_go(+n: Nat, +d: Nat, +k: Nat,
+                       h: R.le_ok(Nat.add(d, k), n))
+  -> {Nat.add(R.win_lo(R.route_window(n, d, k)), Nat.add(d, k)) == n : Nat}:
+  %Laws.sub_add_cancel(n, Nat.add(d, k),
+                       Laws.le_ok_iff(Nat.add(d, k), n, h))
+    : {Nat.add(R.win_lo(R.route_window(n, d, k)), Nat.add(d, k)) == _ : Nat}
+  {==}
+
+def Laws.window_head_age(n, d, k, h):
+  window_head_age_go(n, d, k, h)

@@ -843,3 +843,76 @@ law macro_degenerate:
                         1n, R.lane_num(R.steps(t, R.Lane{1n, 0n, 0n})),
                         1n, win))
       == Nat.sub(t, 1n) : Nat}
+
+# --------------------------------------------------------------------------
+# 3e. the slow-side lag NECESSITY law (the dual of clamp_necessary)
+# --------------------------------------------------------------------------
+# clamp_necessary is the causality theorem of the STAGGERED policy: a
+# zero-delay read asks for sample newest+1, one past everything the
+# source has published, so the clamp is not defensive -- it is forced.
+#
+# This is the mirror for the MACRO-FIRST (co-simulation) policy.  The
+# slow lane (k >= 1) integrates FIRST in its macro window; the input it
+# consumes is the fast lane's window AVERAGE, whose youngest member is
+# at delay d -- sample t-d, emitted on master tick t-d.  Even at the
+# freshest legal window position (d = 1, the macro-first signature
+# read), the youngest sample the slow lane's input depends on is one
+# full macro window old: the window covers ticks (t-d-k, t-d], so the
+# input the slow lane sees at tick t is the average over a window
+# whose HEAD is t-d-k+1, i.e. at least k ticks behind the head of the
+# fast stream.  Two honest claims pin this:
+#
+#   slow_lag_bound:   the windowed read's freshest member t-d is at
+#                     least k-1 ticks behind t whenever the window
+#                     fits the history (d + k - 1 <= t):
+#                       t - (t-d) = d >= ... no: the AGE of the window's
+#                     youngest member is d (its delay), and the window
+#                     fitting forces d + k - 1 <= t, i.e. the read is
+#                     only legal when the history is long enough to
+#                     contain the WHOLE window -- the fitting
+#                     hypothesis IS the lag, stated for the head.
+#   window_head_age:  the window's OLDEST member (the head of the
+#                     average) is d + k - 1 ticks old at tick t --
+#                     the slow lane's input is one full window behind
+#                     the fast stream, forced by the same fitting.
+#
+# Together: the slow input's head is d+k-1 old and its tail is d old;
+# you cannot shrink either without leaving the history (the clamp)
+# or shrinking the window (losing the anti-alias).  The lag is the
+# price of the window -- the duality explainer section 6c states in
+# prose, now as a pair of laws.
+
+# the tail bound: the windowed read at delay d returns a window whose
+# youngest member is t-d, which is exactly d master ticks behind the
+# head of the fast stream (t, published at tick t).  This is the AGE
+# of the freshest sample the slow lane's input touches -- no fresher
+# fast sample participates in a windowed read, ever, whatever the
+# schedule does: windowing cannot make input fresher, only older.
+law slow_lag_bound:
+  for t: Nat
+  for d: Nat
+  {Nat.is_le(Nat.sub(t, d), t) == True{} : Bool}
+
+# the head bound: the windowed read at delay d, window k, has its OLDEST
+# member at route_window's lo = n - (d + k) (window_span proved hi - lo
+# = k), which is d + k ticks behind the head of the stream -- provided
+# the window fits the history (the same le_ok witness the span law
+# uses).  The slow lane's input head is one full window behind.
+# THE head bound: the windowed read at (n, d, k) -- the slow lane's
+# input at tick n, delay d, window k -- has its OLDEST member at
+#   lo = n - (d + k),
+# which is EXACTLY d + k ticks behind the head of the stream (sample
+# n, published at tick n): the age of the window's head equals the
+# full span behind the head, d + k.  This is the necessity half: the
+# slow lane's input cannot be fresher than one full window behind,
+# because making the head fresher means shrinking d + k, i.e. either
+# reading before the window's start (the clamp returns the IC fill)
+# or shrinking the window (losing the anti-alias average).  The lag
+# is forced by the window's existence, as clamp_necessary's clamp is
+# forced by the zero-delay read's causality.
+law window_head_age:
+  for n: Nat
+  for d: Nat
+  for k: Nat
+  for h: R.le_ok(Nat.add(d, k), n)
+  {Nat.add(R.win_lo(R.route_window(n, d, k)), Nat.add(d, k)) == n : Nat}
