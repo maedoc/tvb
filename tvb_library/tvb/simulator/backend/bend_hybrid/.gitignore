@@ -1,0 +1,5 @@
+# built by: /home/duke/.bend/bin/bend montbrio_sweep.bend -o montbrio_sweep
+montbrio_sweep
+montbrio_sweep.gpu
+# job files written by run_montbrio.py / compare_montbrio.py / bench_montbrio.py
+jobdir*/
