@@ -244,6 +244,50 @@ def tick(ls: List<&2, Lane>, +ps: List<&2, Proj>) -> Tick:
   Tick{stepped, route_all(stepped, ps)}
 
 # --------------------------------------------------------------------------
+# Monitors: the temporal-average (tavg) bookkeeping, at Nat level.
+#
+# The template's monitor semantics (nb-hybrid-sim.py.mako L1031/L1052/L1259):
+#
+#   * per master tick, AFTER the (conditional) integrate, the CURRENT state
+#     of EVERY subnet is accumulated into that subnet's tavg buffer;
+#   * ONE SHARED tavg_count is incremented once per master tick for ALL
+#     subnets -- it is a property of the master clock, not of any lane;
+#   * the emitted sample is tavg/n with n = the count, i.e. the average of
+#     the ZOH-held trajectories over master time.
+#
+# A slow lane (k > 1) is integrated only on its due ticks, so between due
+# ticks it CONTRIBUTES its held (ZOH) state every master tick: its average
+# is a master-time average of the hold, not an average of its own steps.
+# Which held sample lands in which tick is already proved (lane_hold,
+# due_iff_publishes, period_from_init); Mon just carries the count that
+# divides the sum, which is why the two laws below quantify over lane
+# periods k and never mention them in the result.
+#
+# Mon is threaded through the ticks exactly like the lane list -- pure,
+# Nat-only, no div/mod, induction over the tick stream as usual.
+# --------------------------------------------------------------------------
+type Mon is Data:
+  Mon{n: Nat}
+
+def mon_n(+m: Mon) -> Nat:
+  match m:
+    case Mon{n}:
+      n
+
+def mon_init() -> Mon:
+  Mon{0n}
+
+def mon_tick(+m: Mon) -> Mon:
+  Mon{1n+mon_n(m)}
+
+def mon_ticks(t: Nat, +ks: List<&2, Nat>, +m: Mon) -> Mon:
+  match t:
+    case 0n:
+      m
+    case 1n+p:
+      mon_ticks(p, ks, mon_tick(m))
+
+# --------------------------------------------------------------------------
 # Validators: Bool-valued, computable, run at job load.  The laws quantify
 # over configs with the hypothesis {ok(cfg) == True{}}; the binary dies on
 # False.  (The le_ok-as-Type decider style is kept for the witness-carrying

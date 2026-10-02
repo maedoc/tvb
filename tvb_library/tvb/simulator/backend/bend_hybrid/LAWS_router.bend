@@ -182,6 +182,45 @@ law period_from_init:
   {R.steps(k, R.Lane{k, Nat.sub(k, 1n), n}) == R.Lane{k, Nat.sub(k, 1n), 1n+n} : R.Lane}
 
 # --------------------------------------------------------------------------
+# 1c. monitors (the tavg story: one shared count, ZOH-held averages)
+# --------------------------------------------------------------------------
+# A1, count_shared: the run has ONE tavg counter, incremented once per master
+# tick for ALL subnets (template L1052 -- it is a property of the master
+# clock, not of any lane).  Quantified over the lane configuration so the
+# claim has teeth: whatever the periods or the NUMBER of lanes, the count
+# after t ticks is exactly t + its initial value.  A "fixed" per-subnet
+# counter (once per lane, or once per due lane) would make the count depend
+# on ks and break this law -- silently changing slow subnets' averages from
+# master-time to per-own-step meaning.  The negative control
+# bad/bad_count.bend is the per-lane mirror and must be rejected.
+law count_shared:
+  for t: Nat
+  for +ks: List<&2, Nat>
+  for +m: R.Mon
+  {R.mon_n(R.mon_ticks(t, ks, m)) == Nat.add(t, R.mon_n(m)) : Nat}
+
+# A2, monitor_zoh_average: tavg is the MASTER-TIME average of the ZOH-held
+# trajectory.  The publication half is period_from_init (proved above): over
+# one period of a lane (period k, k >= 1) exactly one new sample is published,
+# the other k-1 ticks hold.  THIS law is the divisor half: the count the
+# template divides by (L1259: tavg/n with n = tavg_count) advances by
+# exactly k over that same window -- the MASTER span, not the lane's
+# publication count.  Conjoined with period_from_init that IS the tavg
+# story: a slow subnet's temporal average weights each published sample by
+# its hold length in master ticks and divides by the master span.  A
+# per-own-step average would divide by the publication count (1 here);
+# the k >= 1 hypothesis ties this law to the period it is the divisor OF.
+# The float half (sum/k) stays with the kernel (op-order laws); this pins
+# the schedule half.  The negative control bad/bad_count.bend claims the
+# count does not advance at all (the per-due-lane "fix" for an all-k=1
+# network) and must be rejected.
+law monitor_zoh_average:
+  for +k: Nat
+  for +h: {Nat.is_ge(k, 1n) == True{} : Bool}
+  for +ks: List<&2, Nat>
+  {R.mon_n(R.mon_ticks(k, ks, R.mon_init())) == k : Nat}
+
+# --------------------------------------------------------------------------
 # 2. the read
 # --------------------------------------------------------------------------
 
@@ -261,10 +300,8 @@ law ok_bad_clash:
   {R.ok(BAD_CLASH()) == False{} : Bool}
 
 # the Q2 anti-alias window, instance level: an average of w source samples
-# delayed by d ends at n-d and starts w earlier.  (The quantified claim --
-# window span == w whenever d+w <= n -- needs a sub/sub-add lemma library;
-# that is the honest price tag on the proof-cost gradient, deferred on
-# purpose.  The Python property harness covers it until then.)
+# delayed by d ends at n-d and starts w earlier.  The quantified claim is
+# window_span (section 0d); this instance stays as the positive example.
 law window_instance:
   {R.route_window(10n, 2n, 3n) == R.Win{5n, 8n} : R.Win}
 
@@ -343,3 +380,96 @@ law gather_cons:
   for +t: List<&2, K.Edge>
   for +acc: F32
   {K.gather(e <> t, acc) == K.gather(t, F32.add(acc, F32.mul(K.edge_w(e), K.edge_val(e)))) : F32}
+
+# --------------------------------------------------------------------------
+# 0b. the subtraction library (bricks for window_span and staleness_bound)
+# --------------------------------------------------------------------------
+
+# (n - d) - w == n - (d + w) when d + w <= n.  The Q2 window span and the
+# Q1 staleness bound both need it.  The hypothesis is the structural decider
+# le_ok(d + w, n) so the induction destructures it (Bool is_le cannot be
+# matched while staying live); the Bool form is le_ok_iff (below).
+law sub_sub_add:
+  for n: Nat
+  for d: Nat
+  for w: Nat
+  for h: R.le_ok(Nat.add(d, w), n)
+  {Nat.sub(Nat.sub(n, d), w) == Nat.sub(n, Nat.add(d, w)) : Nat}
+
+# the decider and the Bool test agree (both directions), stated once
+law le_ok_iff:
+  for a: Nat
+  for b: Nat
+  for h: R.le_ok(a, b)
+  {Nat.is_le(a, b) == True{} : Bool}
+
+law le_ok_of_b:
+  for a: Nat
+  for b: Nat
+  for +h: {Nat.is_le(a, b) == True{} : Bool}
+  {(R.le_ok(a, b) : Type) == Unit : Type}
+
+# n - d <= n for any d (used by the age bound)
+law sub_le_self:
+  for n: Nat
+  for d: Nat
+  {Nat.is_le(Nat.sub(n, d), n) == True{} : Bool}
+
+# a <= b and b <= c implies a <= c (le transitivity, Bool form)
+law le_trans:
+  for a: Nat
+  for b: Nat
+  for c: Nat
+  for +h1: {Nat.is_le(a, b) == True{} : Bool}
+  for +h2: {Nat.is_le(b, c) == True{} : Bool}
+  {Nat.is_le(a, c) == True{} : Bool}
+
+# m - (m - w) == w when w <= m (the last window-span brick: hi - lo is a
+# difference of window ends sharing the outer n - d, which this cancels)
+law sub_sub_cancel:
+  for m: Nat
+  for w: Nat
+  for +h: {Nat.is_le(w, m) == True{} : Bool}
+  {Nat.sub(m, Nat.sub(m, w)) == w : Nat}
+
+# w <= n - d whenever d + w <= n (the bridge brick: sub_sub_cancel applied
+# to the window needs the span bound on the SHRUNK side of the subtraction)
+law le_sub_add:
+  for n: Nat
+  for d: Nat
+  for w: Nat
+  for h: R.le_ok(Nat.add(d, w), n)
+  {Nat.is_le(w, Nat.sub(n, d)) == True{} : Bool}
+
+# the Q2 anti-alias window span, quantified: whenever d + w <= n, the window
+# route_window(n, d, w) returns covers exactly w source samples (its ends
+# differ by w).  Replaces the instance-level comment on window_instance,
+# which stays as the positive instance.
+law window_span:
+  for n: Nat
+  for d: Nat
+  for w: Nat
+  for h: R.le_ok(Nat.add(d, w), n)
+  {Nat.sub(R.win_hi(R.route_window(n, d, w)), R.win_lo(R.route_window(n, d, w))) == w : Nat}
+
+# n - n == 0 (needed to close the saturated case of sub_sub_cancel)
+law sub_self:
+  for n: Nat
+  {Nat.sub(n, n) == 0n : Nat}
+
+# (1+m) - x == 1 + (m - x) when x <= m (the per-succ step of cancellation)
+law sub_succ_l:
+  for m: Nat
+  for x: Nat
+  for +h: {Nat.is_le(x, m) == True{} : Bool}
+  {Nat.sub(1n+m, x) == Nat.add(1n, Nat.sub(m, x)) : Nat}
+
+# a <= 1 + a, unconditionally (glue for the cancellation step)
+law le_add_one:
+  for a: Nat
+  {Nat.is_le(a, Nat.add(1n, a)) == True{} : Bool}
+
+# n - 0 == n (sub only reduces on the first argument)
+law sub_zero_r:
+  for n: Nat
+  {Nat.sub(n, 0n) == n : Nat}

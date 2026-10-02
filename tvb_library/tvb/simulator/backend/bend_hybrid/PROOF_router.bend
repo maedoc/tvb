@@ -325,6 +325,32 @@ def Laws.period_from_init(k, n, h):
   Laws.countdown_publish(Nat.sub(k, 1n), k, n)
 
 # --------------------------------------------------------------------------
+# 1c. monitors
+# --------------------------------------------------------------------------
+# count_shared: the count is the master clock, independent of the lanes.
+# Induction on t; mon_tick is a pure succ on the count.
+def Laws.count_shared(t, ks, m):
+  match t:
+    case 0n:
+      {==}
+    case 1n++p:
+      Equal.trans(Nat,
+        R.mon_n(R.mon_ticks(p, ks, R.mon_tick(m))),
+        Nat.add(p, 1n+R.mon_n(m)),
+        1n+Nat.add(p, R.mon_n(m)),
+        Laws.count_shared(p, ks, R.mon_tick(m)),
+        Laws.add_succ(p, R.mon_n(m)))
+
+# count_shared, init form: the count after t ticks from Mon{0} is t
+def count_init(+t: Nat, +ks: List<&2, Nat>)
+    -> {R.mon_n(R.mon_ticks(t, ks, R.mon_init())) == t : Nat}:
+  Equal.trans(Nat, R.mon_n(R.mon_ticks(t, ks, R.mon_init())), Nat.add(t, 0n), t,
+              Laws.count_shared(t, ks, R.mon_init()), Laws.add_zero(t))
+
+def Laws.monitor_zoh_average(k, h, ks):
+  count_init(k, ks)
+
+# --------------------------------------------------------------------------
 # 2. the read
 # --------------------------------------------------------------------------
 
@@ -414,3 +440,210 @@ def Laws.gather_nil(acc):
 
 def Laws.gather_cons(e, t, acc):
   {==}
+
+# --------------------------------------------------------------------------
+# 0c. the subtraction library (discharges LAWS 0b, appended)
+# --------------------------------------------------------------------------
+
+# 1n+x <= y implies x <= y (weaken the left succ)
+def le_sub_succ(+x: Nat, y: Nat, +h: {Nat.is_le(1n+x, y) == True{} : Bool})
+    -> {Nat.is_le(x, y) == True{} : Bool}:
+  match y:
+    case 0n:
+      Bool.fne({Nat.is_le(x, 0n) == True{} : Bool}, h)
+    case 1n++q:
+      Laws.le_succ_of_le(x, q, h)
+
+# the decider le_ok(a,b) implies the Bool test
+def le_ok_iff_go(a: Nat, b: Nat, h: R.le_ok(a, b))
+    -> {Nat.is_le(a, b) == True{} : Bool}:
+  match a b:
+    case 0n 0n:
+      {==}
+    case 0n 1n++q:
+      {==}
+    case 1n+p 0n:
+      Empty.absurd({Nat.is_le(1n+p, 0n) == True{} : Bool}, h)
+    case 1n++p 1n++q:
+      le_ok_iff_go(p, q, h)
+
+def Laws.le_ok_iff(a, b, h):
+  le_ok_iff_go(a, b, h)
+
+def le_ok_of_b_go(a: Nat, b: Nat, +h: {Nat.is_le(a, b) == True{} : Bool})
+    -> {(R.le_ok(a, b) : Type) == Unit : Type}:
+  match a b:
+    case 0n _:
+      {==}
+    case 1n+p 0n:
+      Bool.fne({(R.le_ok(1n+p, 0n) : Type) == Unit : Type}, h)
+    case 1n++p 1n++q:
+      le_ok_of_b_go(p, q, h)
+
+def Laws.le_ok_of_b(a, b, h):
+  le_ok_of_b_go(a, b, h)
+
+# (n - d) - w == n - (d + w) when d + w <= n (decider form): the witness
+# destructures with the triple, so the saturation cases are definitional
+# and the succ case recurses structurally.
+def sub_sub_add_go(n: Nat, d: Nat, w: Nat, h: R.le_ok(Nat.add(d, w), n))
+    -> {Nat.sub(Nat.sub(n, d), w) == Nat.sub(n, Nat.add(d, w)) : Nat}:
+  match n d:
+    case 0n _:
+      {==}
+    case 1n++p 0n:
+      {==}
+    case 1n++p 1n++qd:
+      sub_sub_add_go(p, qd, w, h)
+
+def Laws.sub_sub_add(n, d, w, h):
+  sub_sub_add_go(n, d, w, h)
+
+def Laws.sub_le_self(n, d):
+  match n d:
+    case 0n _:
+      {==}
+    case 1n++p 0n:
+      Laws.le_refl_b(1n+p)
+    case 1n++p 1n++q:
+      Laws.le_succ_of_le(Nat.sub(p, q), p, Laws.sub_le_self(p, q))
+
+# 0 <= c, unconditionally
+def le_zero(c: Nat) -> {Nat.is_le(0n, c) == True{} : Bool}:
+  match c:
+    case 0n:
+      {==}
+    case 1n++r:
+      {==}
+
+def le_trans_go(a: Nat, b: Nat, c: Nat,
+               +h1: {Nat.is_le(a, b) == True{} : Bool},
+               +h2: {Nat.is_le(b, c) == True{} : Bool})
+    -> {Nat.is_le(a, c) == True{} : Bool}:
+  match a b:
+    case 0n _:
+      le_zero(c)
+    case 1n+p 0n:
+      Bool.fne({Nat.is_le(1n+p, c) == True{} : Bool}, h1)
+    case 1n++p 1n++q:
+      match c:
+        case 0n:
+          Bool.fne({Nat.is_le(1n+p, 0n) == True{} : Bool}, h2)
+        case 1n++r:
+          le_trans_go(p, q, r, h1, h2)
+
+def Laws.le_trans(a, b, c, h1, h2):
+  le_trans_go(a, b, c, h1, h2)
+
+# --------------------------------------------------------------------------
+# 0d. window-span bricks and the Q2 span law
+# --------------------------------------------------------------------------
+
+# n - n == 0
+def Laws.sub_self(n):
+  match n:
+    case 0n:
+      {==}
+    case 1n++p:
+      Laws.sub_self(p)
+
+# a <= 1 + a, unconditionally
+def Laws.le_add_one(a):
+  match a:
+    case 0n:
+      {==}
+    case 1n++p:
+      Laws.le_add_one(p)
+
+
+# n - 0 == n
+def Laws.sub_zero_r(n):
+  match n:
+    case 0n:
+      {==}
+    case 1n++p:
+      {==}
+
+# (1+m) - x == 1 + (m - x) when x <= m
+def sub_succ_l_go(m: Nat, x: Nat,
+                  +h: {Nat.is_le(x, m) == True{} : Bool})
+    -> {Nat.sub(1n+m, x) == Nat.add(1n, Nat.sub(m, x)) : Nat}:
+  match m x:
+    case _ 0n:
+      {==}
+    case 0n 1n++q:
+      Bool.fne({Nat.sub(1n+0n, 1n+q) == Nat.add(1n, Nat.sub(0n, q)) : Nat}, h)
+    case 1n+p 1n+q:
+      sub_succ_l_go(p, q, h)
+
+def Laws.sub_succ_l(m, x, h):
+  sub_succ_l_go(m, x, h)
+
+# m - (m - w) == w when w <= m
+def sub_sub_cancel_go(m: Nat, w: Nat,
+                      +h: {Nat.is_le(w, m) == True{} : Bool})
+    -> {Nat.sub(m, Nat.sub(m, w)) == w : Nat}:
+  match m w:
+    case 0n 0n:
+      {==}
+    case 1n++p 0n:
+      Laws.sub_self(p)
+    case 0n 1n++q:
+      Bool.fne({Nat.sub(0n, Nat.sub(0n, 1n+q)) == 1n+q : Nat}, h)
+    case 1n++p 1n++q:
+      Equal.trans(Nat,
+        Nat.sub(1n+p, Nat.sub(p, q)),
+        Nat.add(1n, Nat.sub(p, Nat.sub(p, q))),
+        Nat.add(1n, q),
+        Laws.sub_succ_l(p, Nat.sub(p, q), Laws.sub_le_self(p, q)),
+        Equal.cong(Nat, Nat, z => Nat.add(1n, z),
+                   Nat.sub(p, Nat.sub(p, q)), q,
+                   sub_sub_cancel_go(p, q, h)))
+
+def Laws.sub_sub_cancel(m, w, h):
+  sub_sub_cancel_go(m, w, h)
+
+# w <= n - d whenever d + w <= n (decider witness in, Bool out).  Matching
+# d first makes the add inside the witness reduce; in the double-succ case
+# the witness IS the recursive witness, definitionally.
+def le_sub_add_go(+d: Nat, +n: Nat, +w: Nat, h: R.le_ok(Nat.add(d, w), n))
+    -> {Nat.is_le(w, Nat.sub(n, d)) == True{} : Bool}:
+  match d n:
+    case 0n 0n:
+      match w:
+        case 0n:
+          {==}
+        case 1n+r:
+          Empty.absurd({Nat.is_le(1n+r, 0n) == True{} : Bool}, h)
+    case 0n 1n+p:
+      Laws.le_ok_iff(w, 1n+p, h)
+    case 1n++q 0n:
+      Empty.absurd({Nat.is_le(w, 0n) == True{} : Bool}, h)
+    case 1n++q 1n++p:
+      le_sub_add_go(q, p, w, h)
+
+def Laws.le_sub_add(n, d, w, h):
+  le_sub_add_go(d, n, w, h)
+
+# hi - lo == w, quantified: one induction consuming the witness exactly once.
+# n=0 closes by absurdity (d+w <= 0 forces w=d=0 or Empty); d=0 reduces the
+# goal to sub_sub_cancel on n; the double-succ case recurses with the very
+# same witness, since le_ok(1+q+w, 1+p) IS le_ok(q+w, p) definitionally.
+def window_span_go(+n: Nat, +d: Nat, +w: Nat, h: R.le_ok(Nat.add(d, w), n))
+    -> {Nat.sub(R.win_hi(R.route_window(n, d, w)), R.win_lo(R.route_window(n, d, w))) == w : Nat}:
+  match n d:
+    case 0n 0n:
+      match w:
+        case 0n:
+          {==}
+        case 1n+r:
+          Empty.absurd({Nat.sub(R.win_hi(R.route_window(0n, 0n, 1n+r)), R.win_lo(R.route_window(0n, 0n, 1n+r))) == 1n+r : Nat}, h)
+    case 0n 1n+q:
+      Empty.absurd({Nat.sub(R.win_hi(R.route_window(0n, 1n+q, w)), R.win_lo(R.route_window(0n, 1n+q, w))) == w : Nat}, h)
+    case 1n+p 0n:
+      Laws.sub_sub_cancel(1n+p, w, Laws.le_ok_iff(w, 1n+p, h))
+    case 1n+p 1n+q:
+      window_span_go(p, q, w, h)
+
+def Laws.window_span(n, d, w, h):
+  window_span_go(n, d, w, h)
