@@ -2,7 +2,7 @@
 
 *v2 — expanded: the full law catalogue, routing policies as schedules, sequence diagrams, and the first verified kernel leaf. How the tvb-kh hybrid simulator was re-cast as a verified router, in Bend 2.0.*
 
-**TL;DR.** A TVB hybrid simulation — heterogeneous subnetworks, inter-/intra-projections, monitors, stimuli, multi-rate timesteps — fails in ways that are *structural*, not numerical: a delay outside the history horizon, two projections writing the same coupling slot, a zero-delay read off the end of the ring, a regrouped float sum. We rebuilt the *scheduling and routing* of the simulator as a pure program over natural numbers, stated its correctness as **93 machine-checked laws**, and let the floats be payload — until the last layer, where floats return as *operator-order contracts* (which is exactly what IEEE-754 rounding is). The router that decides *what* the kernel reads and writes, *when*, is proved; the kernel that computes is differential-tested; five negative controls keep the laws honest.
+**TL;DR.** A TVB hybrid simulation — heterogeneous subnetworks, inter-/intra-projections, monitors, stimuli, multi-rate timesteps — fails in ways that are *structural*, not numerical: a delay outside the history horizon, two projections writing the same coupling slot, two delays aliasing onto the same ring slot, a zero-delay read off the end of the ring, a regrouped float sum. We rebuilt the *scheduling and routing* of the simulator as a pure program over natural numbers, stated its correctness as **100 machine-checked laws**, and let the floats be payload — until the last layer, where floats return as *operator-order contracts* (which is exactly what IEEE-754 rounding is). The router that decides *what* the kernel reads and writes, *when*, is proved; the kernel that computes is differential-tested; eight negative controls keep the laws honest.
 
 Everything below is running code: `bend PROOF_router.bend --verdict` re-checks every proof with a small Lean-proved kernel, and the gate (`tests/run_router.sh`) also runs the negative controls and pinned functional tests.
 
@@ -107,7 +107,7 @@ Two properties make this function trustworthy rather than merely plausible:
 
 Below zero, saturating subtraction lands on sample 0 — the initial-condition fill, exactly like the engines' pre-filled rings (nb_hybrid broadcasts the IC across all horizon slots).
 
-## 5. The law catalogue (93, proved)
+## 5. The law catalogue (100, proved)
 
 Laws follow the Bend convention: `LAWS_router.bend` is the human-owned *claims*, `PROOF_router.bend` the discharge; `bend PROOF_router.bend --verdict` re-checks with a Lean-proved kernel. Grouped:
 
@@ -123,6 +123,8 @@ Laws follow the Bend convention: `LAWS_router.bend` is the human-owned *claims*,
 | `due_publishes` / `lane_hold` / `due_iff_publishes` | the main loop's `if t % k == 0` gate, both directions |
 | `countdown_publish` / `period_from_init` | from any countdown position, exactly `left+1` ticks reach the next publication; exactly one publication per period — **without any div/mod** |
 | `left_det` | parity_audit decision 10's *"identical step grids"*: the countdown evolves as a pure function of `(left, k)`, so equal-k lanes can never drift |
+
+**Non-aliasing** (new — the CSR anti-alias rule as a theorem chain): `eq_of_is_eq` (the Bool→Equal bridge: a True decider means the numbers are interchangeable in any goal), `lt_of_le_succ` (`d+1 ≤ b` *is* `d < b` — the bridge between `ok`'s delay conjunct and injectivity's strict premise), `fits_lt` (an accepted projection's delay is strictly inside the horizon), `clamp_distinct` (the ZOH clamp read never aliases a delayed in-horizon read), `read_distinct` (two reads at distinct in-horizon delays `da < db ≤ n` read distinct `i0`s — clamp case included), `i0_win_irrelevant` (the read index never depends on the averaging window), and `route_distinct` (two same-source projections at distinct in-horizon delays route distinct reads — "would alias two distinct delays onto the same buffer slot", end-to-end through `route_read`). The horizon witnesses are load-bearing: at `n = 0` the saturating subtraction collapses every delay onto slot 0 (the IC fill) and the aliasing is *real* — the `bad/bad_alias.bend` control claims the unwitnessed law and is rejected.
 
 **End-to-end freshness** (new — the router's whole-tick contract, the composition of config → lanes → routing → fresh reads): `route_all_len` (routing is lossless: one line per projection — a dropped projection is a missing coupling edge, a duplicated one a double write), `route_fresh` (each routed line's freshest endpoint never exceeds its source lane's published newest), `read_fresh_tick` / `read_fresh_ticks` (freshness holds after one tick and at every tick — the kernel's hand-off contract, tick-invariant under the sweep loop's chunking), `line_ordered` (i0 ≤ i1 always: the interpolation interval is never inverted).
 
@@ -318,7 +320,7 @@ flowchart TD
     DIFF["differential compare vs numba —<br/>float-level fidelity"] -. stays in Python .-> OK
 ```
 
-The negative controls are non-negotiable discipline: the hand-rolled ordering decider was wrong twice in this project, and the only thing that caught it was a deliberately false claim (`x < x`) that *must* be rejected. The five current controls: irreflexivity, "the unguarded read is fresh" (mirror of `clamp_necessary`), a fabricated out-of-history witness, "a colliding config is valid", and the regrouped blend. One more lesson from the field: **positive instance laws are load-bearing** — a validator bug (`nats_last` returning 0 for every list) passed all *negative* controls vacuously and was caught only by the positive `csr_ok_good` claim.
+The negative controls are non-negotiable discipline: the hand-rolled ordering decider was wrong twice in this project, and the only thing that caught it was a deliberately false claim (`x < x`) that *must* be rejected. The current controls: irreflexivity, "the unguarded read is fresh" (mirror of `clamp_necessary`), a fabricated out-of-history witness, "a colliding config is valid", the regrouped blend, the json-time wrap, the fabricated count — and, new, `bad_alias.bend`: the non-aliasing claim *without* the horizon witness, which is exactly the IC-fill aliasing at `n = 0` the witness exists to exclude. One more lesson from the field: **positive instance laws are load-bearing** — a validator bug (`nats_last` returning 0 for every list) passed all *negative* controls vacuously and was caught only by the positive `csr_ok_good` claim.
 
 ## 10. What this deliberately does not do
 
@@ -329,6 +331,7 @@ The negative controls are non-negotiable discipline: the hand-rolled ordering de
 ## 11. Where this goes next
 
 - **More policies, more theorems.** Both macro-first laws are now proved: the degenerate gate (`macro_degenerate`: at k=1 the co-simulation read IS the staggered point read) and the slow-side lag necessity (`window_head_age` + `slow_lag_bound`: the slow lane's windowed input head is exactly d+k ticks behind the stream head — forced, not chosen). The routing table's three policies are now fully fenced by laws.
+- **Non-aliasing is now a theorem, not a comment.** The csr comment's warning — a horizon too small "would alias two distinct delays onto the same buffer slot" — is now the `route_distinct` chain: `ok` → `fits_lt` → `read_distinct` → distinct routed reads. The horizon witness `le_ok(db, n)` is load-bearing (the `bad_alias` control proves the witnessless claim is false), which is the same lesson as `delay_injective` but end-to-end through routing.
 - **The subtraction library.** `sub_add_cancel`, `sub_add_r` and `add_comm`/`add_assoc` (proved) unlocked the staleness bound (Q1's "up to k−1 ticks stale" as a theorem — `stale_bound` is proved), delay injectivity within the ring, and the quantified window-span law. The next bricks worth proving: `sub_le_mono`'s strict sibling `sub_lt_mono` (a dual of `delay_injective`) and a `div_mod` pair to retire carried counters in favour of closed forms — deferred: the counters make every schedule law a plain induction, which is the cheaper debt.
 - **History as F32 trees** (the tinygrad-in-Bend pattern): forkable, shareable across parallel branches, the GPU-port representation — with tree-depth induction laws like *an IC-region read returns the initial-condition leaf, for any depth and config*.
 - **The property harness.** Random configurations attacking `ok`/`csr_ok` from the Python side, cross-checked against the backend's own validation.

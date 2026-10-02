@@ -1006,3 +1006,106 @@ law line_ordered:
   for +win: Nat
   {Nat.is_le(R.l_i0(R.route_read(n, d, num, den, win)),
              R.l_i1(R.route_read(n, d, num, den, win))) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# 4b. the non-aliasing laws: distinct in-horizon delays never share a slot
+# --------------------------------------------------------------------------
+
+# THE Bool->Equal bridge, the gap this batch fills: the decider being True
+# means the numbers are actually interchangeable in any goal.  Everything
+# downstream that wants to rewrite by an equality of computed Nats goes
+# through this brick (route_distinct_src needs it for the source equality).
+law eq_of_is_eq:
+  for +a: Nat
+  for +b: Nat
+  for +h: {Nat.is_eq(a, b) == True{} : Bool}
+  {a == b : Nat}
+
+# is_le(a+1, b) is is_lt(a, b) under the hood (Cmp shifts by one): the
+# bridge brick between the ok(cfg) delay conjunct (stated with the +1:
+# d + 1 <= horizon) and delay injectivity's strict hypothesis (d < b).
+law lt_of_le_succ:
+  for +a: Nat
+  for +b: Nat
+  for +h: {Nat.is_le(Nat.add(a, 1n), b) == True{} : Bool}
+  {Nat.is_lt(a, b) == True{} : Bool}
+
+# ok(cfg)'s delay conjunct IS the injectivity premise: an accepted
+# projection's delay is strictly inside the history horizon.  Composed with
+# read_distinct this turns router.bend's csr comment ("horizon >= max(idelay)
+# + 1 ... would alias two distinct delays onto the same buffer slot") into
+# a chain of proved laws: ok -> fits_lt -> read_distinct -> no aliasing.
+law fits_lt:
+  for +nlanes: Nat
+  for +horizon: Nat
+  for +p: R.Proj
+  for +h: {R.proj_shape_ok(nlanes, horizon, p) == True{} : Bool}
+  {Nat.is_lt(R.proj_d(p), horizon) == True{} : Bool}
+
+# the clamp read never aliases a delayed read: the d=0 branch answers
+# i0 = n (the ZOH clamp), a d = 1+dp read answers i0 = n-(1+dp), and
+# n-(1+dp) < n holds whenever 1+dp <= n -- i.e. whenever the delayed read
+# is inside the horizon at all.  The witness is load-bearing: at n=0 the
+# saturated read ALSO answers 0 and the aliasing is real (the IC fill).
+law clamp_distinct:
+  for n: Nat
+  for dp: Nat
+  for hb: R.le_ok(Nat.add(1n, dp), n)
+  {Nat.is_ne(n, Nat.sub(n, Nat.add(1n, dp))) == True{} : Bool}
+
+# the quantified non-aliasing law: two reads at distinct in-horizon delays
+# da < db <= n read distinct i0 samples.  This is delay_injective lifted
+# from the index arithmetic to route_read itself -- clamp case included
+# (da=0 reads the head n, which only a saturating read could repeat, and
+# saturation is excluded by db <= n).
+law read_distinct:
+  for n: Nat
+  for da: Nat
+  for db: Nat
+  for +num: Nat
+  for +den: Nat
+  for +win: Nat
+  for h: {Nat.is_lt(da, db) == True{} : Bool}
+  for hb: R.le_ok(db, n)
+  {Nat.is_ne(R.l_i0(R.route_read(n, da, num, den, win)),
+             R.l_i0(R.route_read(n, db, num, den, win))) == True{} : Bool}
+
+# the routing half: two projections reading the SAME source lane at
+# distinct in-horizon delays route distinct i0s -- they touch disjoint
+# source samples, so their coupling contributions are provably not
+# reading the same slot of the shared ring.  This is the CSR anti-alias
+# rule (router.bend's "would alias two distinct delays onto the same
+# buffer slot"), end-to-end through route_proj, at arbitrary lane state
+# (num/den/window ride along untouched: the read depends on d only).
+# the read index is window-blind: l_i0 does not depend on win at all
+# (the averaging window selects which samples the KERNEL averages, never
+# which sample the read starts from).  Needed to compare reads from two
+# projections that share a source and delays but not windows.
+law i0_win_irrelevant:
+  for +n: Nat
+  for +d: Nat
+  for +num: Nat
+  for +den: Nat
+  for +wa: Nat
+  for +wb: Nat
+  {R.l_i0(R.route_read(n, d, num, den, wa))
+   == R.l_i0(R.route_read(n, d, num, den, wb)) : Nat}
+
+law route_distinct:
+  for +ls: List<&2, R.Lane>
+  for +pa: R.Proj
+  for +pb: R.Proj
+  for hsrc: {Nat.is_eq(R.proj_src(pa), R.proj_src(pb)) == True{} : Bool}
+  for h: {Nat.is_lt(R.proj_d(pa), R.proj_d(pb)) == True{} : Bool}
+  for hb: R.le_ok(R.proj_d(pb),
+                 R.lane_newest(R.nth_lane(ls, R.proj_src(pb))))
+  {Nat.is_ne(R.l_i0(R.route_read(R.lane_newest(R.nth_lane(ls, R.proj_src(pa))),
+                                 R.proj_d(pa),
+                                 R.lane_num(R.nth_lane(ls, R.proj_src(pa))),
+                                 R.lane_k(R.nth_lane(ls, R.proj_src(pa))),
+                                 R.proj_win(pa))),
+             R.l_i0(R.route_read(R.lane_newest(R.nth_lane(ls, R.proj_src(pb))),
+                                 R.proj_d(pb),
+                                 R.lane_num(R.nth_lane(ls, R.proj_src(pb))),
+                                 R.lane_k(R.nth_lane(ls, R.proj_src(pb))),
+                                 R.proj_win(pb)))) == True{} : Bool}

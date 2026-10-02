@@ -412,6 +412,62 @@ def check_tick_split(limit: int = 5) -> int:
     return bad
 
 
+def check_non_aliasing(limit: int = 8) -> int:
+    """The non-aliasing laws, engine-side.
+
+    read_distinct / route_distinct: two reads at distinct in-horizon delays
+      da < db <= n read distinct i0 samples (clamp case included: da=0
+      reads the head n, distinct from n-db once db <= n).
+    i0_win_irrelevant: the read index never depends on the window.
+    fits_lt: an accepted projection's delay is strictly inside the horizon.
+    """
+    bad = 0
+    for n in range(limit):
+        for da in range(limit):
+            for db in range(da + 1, limit):
+                if db <= n:  # horizon hypothesis le_ok(db, n)
+                    ia = route_read_py(n, da, 0, 1, 0)[0]
+                    ib = route_read_py(n, db, 0, 1, 0)[0]
+                    if ia == ib:
+                        print(f"FAIL read_distinct n={n} da={da} db={db}: "
+                              f"aliased slot {ia}")
+                        bad += 1
+                if da <= n:  # symmetric direction for the clamp read
+                    ia = route_read_py(n, da, 0, 1, 0)[0]
+                    if ia != sub(n, da):
+                        print(f"FAIL clamp i0 n={n} da={da}")
+                        bad += 1
+    # negative control: OUTSIDE the horizon the aliasing is real (n=0
+    # collapses d=1 and d=2 onto slot 0 -- the IC fill)
+    if route_read_py(0, 1, 0, 1, 0)[0] != route_read_py(0, 2, 0, 1, 0)[0]:
+        print("FAIL negative control: n=0 d=1 vs d=2 should alias on slot 0")
+        bad += 1
+    # i0_win_irrelevant: the read start never sees the window
+    for n in range(4):
+        for d in range(4):
+            for wa in range(3):
+                for wb in range(3):
+                    if route_read_py(n, d, 0, 1, wa)[0] != route_read_py(n, d, 0, 1, wb)[0]:
+                        print(f"FAIL i0_win_irrelevant n={n} d={d} wa={wa} wb={wb}")
+                        bad += 1
+    # route_distinct, list-level: same source, distinct in-horizon delays
+    for nl in range(1, 4):
+        for new in range(4):
+            ls = [Lane(1 + (j % 2), j % 2, new + j) for j in range(nl)]
+            for da in range(3):
+                for db in range(da + 1, 4):
+                    if db <= ls[0].newest:
+                        pa = (0, 1, da, 0, 0)
+                        pb = (0, 1, db, 2, 1)  # distinct windows on purpose
+                        ia = route_proj_py(ls, pa)[0]
+                        ib = route_proj_py(ls, pb)[0]
+                        if ia == ib:
+                            print(f"FAIL route_distinct nl={nl} new={new} "
+                                  f"da={da} db={db}: aliased {ia}")
+                            bad += 1
+    return bad
+
+
 def main() -> int:
     bad = 0
     bad += check_window_span()
@@ -427,12 +483,14 @@ def main() -> int:
     bad += check_lanes_step_local()
     bad += check_route_pointwise()
     bad += check_tick_split()
+    bad += check_non_aliasing()
     if bad:
         print(f"{bad} FAILURES")
         return 1
     print("window_span + hold_until_due + left_invariant + delay_injective "
           "+ staleness (canonical_run/newest_at/stale_bound) + window_ordered "
-          "+ list-level routing (lanes_step_local / route_pointwise / tick_split): "
+          "+ list-level routing (lanes_step_local / route_pointwise / tick_split) "
+          "+ non-aliasing (read_distinct / i0_win_irrelevant / route_distinct): "
           "all properties hold (exhaustive small range, engine-side)")
     return 0
 

@@ -1433,3 +1433,163 @@ def read_fresh_ticks_go(t: Nat, +ls: List<&2, R.Lane>, +ps: List<&2, R.Proj>,
 
 def Laws.read_fresh_ticks(ls, ps, t, i, h):
   read_fresh_ticks_go(t, ls, ps, i, h)
+
+# --------------------------------------------------------------------------
+# 4b. the non-aliasing laws
+# --------------------------------------------------------------------------
+
+# eq_of_is_eq: the decider True means definitionally equal Nats.  The
+# double-succ case recurses (cmp peels both); the mismatched cases are
+# absurd (a False decider cannot be True).
+def eq_of_is_eq_go(a: Nat, b: Nat,
+                   +h: {Nat.is_eq(a, b) == True{} : Bool})
+    -> {a == b : Nat}:
+  match a b h:
+    case 0n 0n _:
+      {==}
+    case 0n 1n+q h:
+      Bool.fne({0n == 1n+q : Nat}, h)
+    case 1n+p 0n h:
+      Bool.fne({1n+p == 0n : Nat}, h)
+    case 1n+p 1n+q h:
+      %eq_of_is_eq_go(p, q, h) : {1n+p == 1n+_ : Nat}
+      {==}
+def Laws.eq_of_is_eq(a, b, h):
+  eq_of_is_eq_go(a, b, h)
+
+# lt_of_le_succ: d+1 <= b is d < b.  0 < b always; 1+p <= 0 absurd;
+# the double-succ case is the recursive claim (is_le(1+p,1+q) IS the
+# decider on (p,q), and so is is_lt).
+def lt_of_le_succ_go(a: Nat, b: Nat,
+                     +h: {Nat.is_le(Nat.add(a, 1n), b) == True{} : Bool})
+    -> {Nat.is_lt(a, b) == True{} : Bool}:
+  match a b h:
+    case 0n 0n h:
+      Bool.fne({Nat.is_le(Nat.add(0n, 1n), 0n) == True{} : Bool}, h)
+    case 0n 1n+q _:
+      {==}
+    case 1n+p 0n h:
+      Bool.fne({Nat.is_le(Nat.add(1n+p, 1n), 0n) == True{} : Bool}, h)
+    case 1n+p 1n+q h:
+      lt_of_le_succ_go(p, q, h)
+def Laws.lt_of_le_succ(a, b, h):
+  lt_of_le_succ_go(a, b, h)
+
+# fits_lt: peel proj_shape_ok's conjuncts to the delay one, then shift
+# the +1: d + 1 <= horizon is d < horizon.
+def Laws.fits_lt(nlanes, horizon, p, h):
+  lt_of_le_succ_go(R.proj_d(p), horizon,
+                   proj_delay_fits_go(nlanes, horizon, p, h))
+
+# clamp_distinct: the head n is never the delayed index n-(1+dp) once
+# 1+dp <= n.  n=0 is Empty (le_ok(1+dp, 0) uninhabited); at n=1+p the
+# subtraction peels to sub(p, dp), which is < 1+p by sub_le_self +
+# le_lt_succ -- strict, so lt_imp_ne + ne_symm give the disequality.
+def clamp_distinct_go(n: Nat, +dp: Nat,
+                      hb: R.le_ok(Nat.add(1n, dp), n))
+    -> {Nat.is_ne(n, Nat.sub(n, Nat.add(1n, dp))) == True{} : Bool}:
+  match n:
+    case 0n:
+      Empty.absurd({Nat.is_ne(0n, Nat.sub(0n, Nat.add(1n, dp))) == True{} : Bool}, hb)
+    case 1n++p:
+      ne_symm(Nat.sub(p, dp), 1n+p,
+              lt_imp_ne(Nat.sub(p, dp), 1n+p,
+                        le_lt_succ(Nat.sub(p, dp), p,
+                                   Laws.sub_le_self(p, dp))))
+def Laws.clamp_distinct(n, dp, hb):
+  clamp_distinct_go(n, dp, hb)
+
+# read_distinct: split on the clamp.  da=0 is clamp_distinct (db=1+dq,
+# the delayed read is in the horizon); da=1+dap is delay_inj_go at the
+# reduced normal form of both reads (route_read's d>=1 branch peels the
+# 1 off the delay, and l_i0 of it is n-(1+dap)).
+def read_distinct_go(n: Nat, da: Nat, db: Nat,
+                     +num: Nat, +den: Nat, +win: Nat,
+                     h: {Nat.is_lt(da, db) == True{} : Bool},
+                     hb: R.le_ok(db, n))
+    -> {Nat.is_ne(R.l_i0(R.route_read(n, da, num, den, win)),
+                  R.l_i0(R.route_read(n, db, num, den, win))) == True{} : Bool}:
+  match da db h hb:
+    case 0n 0n h hb:
+      Bool.fne({Nat.is_ne(R.l_i0(R.route_read(n, 0n, num, den, win)),
+                          R.l_i0(R.route_read(n, 0n, num, den, win)))
+                == True{} : Bool}, h)
+    case 0n 1n+dq h hb:
+      clamp_distinct_go(n, dq, hb)
+    case 1n+dap 0n h hb:
+      Bool.fne({Nat.is_ne(R.l_i0(R.route_read(n, 1n+dap, num, den, win)),
+                          R.l_i0(R.route_read(n, 0n, num, den, win)))
+                == True{} : Bool}, h)
+    case 1n+dap 1n+dq h hb:
+      delay_inj_go(n, 1n+dap, 1n+dq, h, hb)
+def Laws.read_distinct(n, da, db, num, den, win, h, hb):
+  read_distinct_go(n, da, db, num, den, win, h, hb)
+
+# i0_win_irrelevant: both i0s reduce to the same normal form (the d match
+# answers i0 before win is ever touched), so it is reflexivity.
+def i0_win_irrelevant_go(+n: Nat, +d: Nat, +num: Nat, +den: Nat,
+                          +wa: Nat, +wb: Nat)
+    -> {R.l_i0(R.route_read(n, d, num, den, wa))
+        == R.l_i0(R.route_read(n, d, num, den, wb)) : Nat}:
+  match d:
+    case 0n:
+      {==}
+    case 1n+dp:
+      {==}
+def Laws.i0_win_irrelevant(n, d, num, den, wa, wb):
+  i0_win_irrelevant_go(n, d, num, den, wa, wb)
+
+# route_distinct: both projections read the same source lane, so pb's
+# source can be substituted into pa's read (eq_of_is_eq + Equal.sym: the
+# rewrite replaces the marked positions with the LEFT side), and then
+# read_distinct closes the goal -- the two reads sit at the same n, the
+# same lane fraction, and distinct in-horizon delays.  The go wrapper
+# carries +pa/+pb so each projection can be queried twice (d and win).
+def route_distinct_go(+ls: List<&2, R.Lane>, +pa: R.Proj, +pb: R.Proj,
+                      hsrc: {Nat.is_eq(R.proj_src(pa), R.proj_src(pb)) == True{} : Bool},
+                      h: {Nat.is_lt(R.proj_d(pa), R.proj_d(pb)) == True{} : Bool},
+                      hb: R.le_ok(R.proj_d(pb),
+                                  R.lane_newest(R.nth_lane(ls, R.proj_src(pb)))))
+    -> {Nat.is_ne(R.l_i0(R.route_read(R.lane_newest(R.nth_lane(ls, R.proj_src(pa))),
+                                      R.proj_d(pa),
+                                      R.lane_num(R.nth_lane(ls, R.proj_src(pa))),
+                                      R.lane_k(R.nth_lane(ls, R.proj_src(pa))),
+                                      R.proj_win(pa))),
+                  R.l_i0(R.route_read(R.lane_newest(R.nth_lane(ls, R.proj_src(pb))),
+                                      R.proj_d(pb),
+                                      R.lane_num(R.nth_lane(ls, R.proj_src(pb))),
+                                      R.lane_k(R.nth_lane(ls, R.proj_src(pb))),
+                                      R.proj_win(pb)))) == True{} : Bool}:
+  e = Equal.sym(Nat, R.proj_src(pa), R.proj_src(pb),
+                eq_of_is_eq_go(R.proj_src(pa), R.proj_src(pb), hsrc))
+  %e : {Nat.is_ne(R.l_i0(R.route_read(R.lane_newest(R.nth_lane(ls, _)),
+                                      R.proj_d(pa),
+                                      R.lane_num(R.nth_lane(ls, _)),
+                                      R.lane_k(R.nth_lane(ls, _)),
+                                      R.proj_win(pa))),
+                  R.l_i0(R.route_read(R.lane_newest(R.nth_lane(ls, R.proj_src(pb))),
+                                      R.proj_d(pb),
+                                      R.lane_num(R.nth_lane(ls, R.proj_src(pb))),
+                                      R.lane_k(R.nth_lane(ls, R.proj_src(pb))),
+                                      R.proj_win(pb)))) == True{} : Bool}
+  # align the windows: the second read's win(pb) becomes win(pa)
+  e2 = i0_win_irrelevant_go(R.lane_newest(R.nth_lane(ls, R.proj_src(pb))),
+                             R.proj_d(pb),
+                             R.lane_num(R.nth_lane(ls, R.proj_src(pb))),
+                             R.lane_k(R.nth_lane(ls, R.proj_src(pb))),
+                             R.proj_win(pa), R.proj_win(pb))
+  %e2 : {Nat.is_ne(R.l_i0(R.route_read(R.lane_newest(R.nth_lane(ls, R.proj_src(pb))),
+                                       R.proj_d(pa),
+                                       R.lane_num(R.nth_lane(ls, R.proj_src(pb))),
+                                       R.lane_k(R.nth_lane(ls, R.proj_src(pb))),
+                                       R.proj_win(pa))),
+                   _) == True{} : Bool}
+  read_distinct_go(R.lane_newest(R.nth_lane(ls, R.proj_src(pb))),
+                   R.proj_d(pa), R.proj_d(pb),
+                   R.lane_num(R.nth_lane(ls, R.proj_src(pb))),
+                   R.lane_k(R.nth_lane(ls, R.proj_src(pb))),
+                   R.proj_win(pa),
+                   h, hb)
+def Laws.route_distinct(ls, pa, pb, hsrc, h, hb):
+  route_distinct_go(ls, pa, pb, hsrc, h, hb)
+
