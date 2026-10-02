@@ -1315,3 +1315,121 @@ def window_head_age_go(+n: Nat, +d: Nat, +k: Nat,
 
 def Laws.window_head_age(n, d, k, h):
   window_head_age_go(n, d, k, h)
+
+# --------------------------------------------------------------------------
+# 4. the end-to-end freshness laws
+# --------------------------------------------------------------------------
+
+# route_all_len: induction on ps; both sides reduce to 1+len(tail).
+def route_all_len_go(+ls: List<&2, R.Lane>, +ps: List<&2, R.Proj>)
+  -> {R.lines_len(R.route_all(ls, ps)) == R.projs_len(ps) : Nat}:
+  match ps:
+    case Nil{}:
+      {==}
+    case h <> t:
+      %route_all_len_go(ls, t)
+        : {Nat.add(1n, R.lines_len(R.route_all(ls, t))) == Nat.add(1n, _) : Nat}
+      {==}
+
+def Laws.route_all_len(ls, ps):
+  route_all_len_go(ls, ps)
+
+# line_ordered: case on d.  d=0 clamps i0=i1=n (le_refl_b); d>=1 asks
+# sub(n, 1+dp) <= sub(n, dp), proved by double induction: both sides of
+# Nat.sub reduce on BOTH arguments, so the goal in the (1+np, 1+dq) case
+# IS the same claim at (np, dq) -- the recursion is on n.
+def line_ordered_go(n: Nat, +dp: Nat)
+  -> {Nat.is_le(Nat.sub(n, Nat.add(1n, dp)), Nat.sub(n, dp))
+        == True{} : Bool}:
+  match n dp:
+    case 0n _:
+      {==}
+    case 1n++np 0n:
+      %Equal.sym(Nat, Nat.sub(np, 0n), np, Laws.sub_zero(np))
+        : {Nat.is_le(_, 1n+np) == True{} : Bool}
+      Laws.le_succ_b(np)
+    case 1n+np 1n+dq:
+      line_ordered_go(np, dq)
+
+def Laws.line_ordered(n, d, num, den, win):
+  match d:
+    case 0n:
+      Laws.le_refl_b(n)
+    case 1n+dp:
+      line_ordered_go(n, dp)
+
+# route_fresh: the pointwise brick.  route_proj(ls, p) is route_read at
+# n = lane_newest(nth_lane(ls, proj_src(p))), d = proj_d(p) -- and
+# read_fresh at exactly those arguments closes the goal.
+def Laws.route_fresh(ls, p):
+  Laws.read_fresh(R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                  R.proj_d(p),
+                  R.lane_num(R.nth_lane(ls, R.proj_src(p))),
+                  R.lane_k(R.nth_lane(ls, R.proj_src(p))),
+                  R.proj_win(p))
+
+# read_fresh_tick: tick steps then routes, so the goal reduces to the
+# per-projection freshness against the stepped lanes -- proved by the
+# same induction-on-ps shape as route_pointwise (lanes_step_local's
+# sibling), with route_fresh closing each head and the bounds witness
+# killing the Nil case.
+def read_fresh_tick_go(+ls: List<&2, R.Lane>, +ps: List<&2, R.Proj>,
+                       i: Nat, h: R.lt_ok(i, R.projs_len(ps)))
+  -> {Nat.is_le(R.l_i1(R.nth_line(R.tick_lines(R.tick(ls, ps)), i)),
+                R.lane_newest(R.nth_lane(R.lanes_step(ls),
+                                          R.proj_src(R.nth_proj(ps, i)))))
+        == True{} : Bool}:
+  match ps i h:
+    case Nil{} _ h:
+      Empty.absurd({Nat.is_le(R.l_i1(R.nth_line(R.route_all(R.lanes_step(ls), Nil{}), i)),
+                               R.lane_newest(R.nth_lane(R.lanes_step(ls),
+                                                        R.proj_src(R.nth_proj(Nil{}, i)))))
+                     == True{} : Bool},
+                   lt_ok_nil_absurd(i, h))
+    case p <> t 0n _:
+      Laws.route_fresh(R.lanes_step(ls), p)
+    case p <> t 1n+q hlt:
+      read_fresh_tick_go(ls, t, q, hlt)
+
+def Laws.read_fresh_tick(ls, ps, i, h):
+  read_fresh_tick_go(ls, ps, i, h)
+
+# the t=0 base: the initial Tick routes against ls itself -- the same
+# induction-on-ps shape, route_fresh closing each head.
+def read_fresh_nil_go(+ls: List<&2, R.Lane>, +ps: List<&2, R.Proj>,
+                      i: Nat, h: R.lt_ok(i, R.projs_len(ps)))
+  -> {Nat.is_le(R.l_i1(R.nth_line(R.tick_lines(R.ticks(0n, ls, ps)), i)),
+                R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(0n, ls, ps)),
+                                          R.proj_src(R.nth_proj(ps, i)))))
+        == True{} : Bool}:
+  match ps i h:
+    case Nil{} _ h:
+      Empty.absurd({Nat.is_le(R.l_i1(R.nth_line(R.route_all(ls, Nil{}), i)),
+                               R.lane_newest(R.nth_lane(ls,
+                                                        R.proj_src(R.nth_proj(Nil{}, i)))))
+                     == True{} : Bool},
+                   lt_ok_nil_absurd(i, h))
+    case p <> t 0n _:
+      Laws.route_fresh(ls, p)
+    case p <> t 1n+q hlt:
+      read_fresh_nil_go(ls, t, q, hlt)
+
+# read_fresh_ticks: induction on t.  t=0 is the initial Tick (routes
+# against ls itself -- route_fresh at the unstepped lanes); the step
+# case peels one tick and continues from the stepped lanes, which is
+# exactly tick_split's composition: freshness at t+1 is freshness at 1
+# from the state freshness held at t.
+def read_fresh_ticks_go(t: Nat, +ls: List<&2, R.Lane>, +ps: List<&2, R.Proj>,
+                        i: Nat, h: R.lt_ok(i, R.projs_len(ps)))
+  -> {Nat.is_le(R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                          R.proj_src(R.nth_proj(ps, i)))))
+        == True{} : Bool}:
+  match t:
+    case 0n:
+      read_fresh_nil_go(ls, ps, i, h)
+    case 1n+q:
+      read_fresh_ticks_go(q, R.tick_lanes(R.tick(ls, ps)), ps, i, h)
+
+def Laws.read_fresh_ticks(ls, ps, t, i, h):
+  read_fresh_ticks_go(t, ls, ps, i, h)

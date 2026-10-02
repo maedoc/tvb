@@ -916,3 +916,93 @@ law window_head_age:
   for k: Nat
   for h: R.le_ok(Nat.add(d, k), n)
   {Nat.add(R.win_lo(R.route_window(n, d, k)), Nat.add(d, k)) == n : Nat}
+
+# --------------------------------------------------------------------------
+# 4. the end-to-end freshness laws: the router's whole-tick contract
+# --------------------------------------------------------------------------
+# The read laws so far are local: read_fresh pins ONE route_read against
+# an abstract n; route_pointwise pins that list routing is per-projection;
+# lanes_step_local pins that stepping is per-lane.  The kernel's actual
+# contract is a COMPOSITION of all three, and no law stated it until now:
+#
+#   under ok(cfg), at every tick, every routed Line's endpoints point at
+#   samples the source lane has already published -- the router never
+#   hands the kernel a read the history cannot answer.
+#
+# Four laws build the ladder, bottom-up:
+#   route_all_len    routing is lossless: |route_all(ls, ps)| == |ps|
+#                    (no projection silently dropped or duplicated)
+#   route_fresh      the pointwise brick: routing projection i reads
+#                    only published samples of its OWN source lane
+#   read_fresh_tick  the end-to-end claim at ONE tick: after stepping,
+#                    every projection's read is fresh
+#   read_fresh_ticks the same at t ticks: freshness is tick-invariant
+#                    (chunk safety for the freshness property itself)
+# plus line_ordered: every routed Line has i0 <= i1 (the interpolation
+# interval is well-formed -- the kernel's blend is never inverted).
+
+# routing is lossless: the routed line list has exactly as many lines
+# as there are projections.  A dropped projection would be a missing
+# coupling edge (a silent no-op); a duplicated one would be a double
+# coupling write.  Neither can hide.
+law route_all_len:
+  for +ls: List<&2, R.Lane>
+  for +ps: List<&2, R.Proj>
+  {R.lines_len(R.route_all(ls, ps)) == R.projs_len(ps) : Nat}
+
+# the pointwise freshness brick: routing projection i against lanes ls
+# reads only published samples -- i1 (the FRESHEST endpoint the kernel
+# will touch, clamp included) never exceeds the source lane's newest.
+# This is read_fresh specialised to the actual call site: n is not
+# abstract, it is lane_newest(nth_lane(ls, proj_src(p))).
+law route_fresh:
+  for +ls: List<&2, R.Lane>
+  for +p: R.Proj
+  {Nat.is_le(R.l_i1(R.route_read(R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                                 R.proj_d(p),
+                                 R.lane_num(R.nth_lane(ls, R.proj_src(p))),
+                                 R.lane_k(R.nth_lane(ls, R.proj_src(p))),
+                                 R.proj_win(p))),
+             R.lane_newest(R.nth_lane(ls, R.proj_src(p)))) == True{} : Bool}
+
+# the end-to-end claim at one tick: tick steps the lanes FIRST, then
+# routes every projection against the stepped lanes.  Every routed
+# line is fresh against its source's POST-TICK newest -- the router
+# hands the kernel only samples the (updated) history contains.
+law read_fresh_tick:
+  for +ls: List<&2, R.Lane>
+  for +ps: List<&2, R.Proj>
+  for i: Nat
+  for h: R.lt_ok(i, R.projs_len(ps))
+  {Nat.is_le(R.l_i1(R.nth_line(R.tick_lines(R.tick(ls, ps)), i)),
+             R.lane_newest(R.nth_lane(R.lanes_step(ls),
+                                       R.proj_src(R.nth_proj(ps, i)))))
+      == True{} : Bool}
+
+# freshness is tick-invariant: after t master ticks, every projection's
+# routed line is still fresh against its source's newest.  The sweep
+# loop's checkpointing cannot break freshness -- the property composes
+# exactly as the ticks do (tick_split is the companion composition law).
+law read_fresh_ticks:
+  for +ls: List<&2, R.Lane>
+  for +ps: List<&2, R.Proj>
+  for t: Nat
+  for i: Nat
+  for h: R.lt_ok(i, R.projs_len(ps))
+  {Nat.is_le(R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+             R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                       R.proj_src(R.nth_proj(ps, i)))))
+      == True{} : Bool}
+
+# the read endpoints are in order: i0 <= i1 in every routed line, so
+# the kernel's interpolation interval is never inverted.  (At d=0 the
+# clamp sets i0 = i1; at d >= 1 route_read answers i0 = n-(1+dp) and
+# i1 = n-dp, and n-(1+dp) <= n-dp always holds -- sub is antitone.)
+law line_ordered:
+  for +n: Nat
+  for +d: Nat
+  for +num: Nat
+  for +den: Nat
+  for +win: Nat
+  {Nat.is_le(R.l_i0(R.route_read(n, d, num, den, win)),
+             R.l_i1(R.route_read(n, d, num, den, win))) == True{} : Bool}

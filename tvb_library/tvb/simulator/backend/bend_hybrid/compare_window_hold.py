@@ -340,6 +340,47 @@ def check_slow_lag(limit: int = 10) -> int:
     return bad
 
 
+def check_freshness(limit: int = 4) -> int:
+    """The end-to-end freshness laws, engine-side.
+
+    route_all_len:  routing is lossless -- len(routed) == len(projs).
+    route_fresh:    each routed line's i1 <= its source lane's newest
+                    (published) -- the router never reads unpublished.
+    read_fresh_tick:  freshness holds after one whole tick (step then
+                    route against the stepped lanes).
+    read_fresh_ticks: freshness is tick-invariant (holds at every t).
+    line_ordered:   i0 <= i1 in every routed line (never inverted).
+    """
+    bad = 0
+    for nl in range(1, limit + 1):
+        for np_ in range(1, limit + 1):
+            ps = [(j % nl, (j + 1) % nl, j % 3, j % 2, j) for j in range(np_)]
+            for t in range(limit + 2):
+                ls = [Lane(1 + (j % 3), j % 2, j) for j in range(nl)]
+                # roll t ticks
+                cur = ls
+                for _ in range(t):
+                    cur = lanes_step_py(cur)
+                routed = [route_proj_py(cur, p) for p in ps]
+                # route_all_len
+                if len(routed) != len(ps):
+                    print(f"FAIL route_all_len nl={nl} np={np_}")
+                    bad += 1
+                # route_fresh / read_fresh_tick(s): every line fresh
+                for j, line in enumerate(routed):
+                    src = ps[j][0]
+                    newest = cur[src].newest
+                    if line[1] > newest:  # i1 <= newest
+                        print(f"FAIL freshness nl={nl} np={np_} t={t} j={j}: "
+                              f"i1 {line[1]} > newest {newest}")
+                        bad += 1
+                    if line[0] > line[1]:  # i0 <= i1
+                        print(f"FAIL line_ordered nl={nl} np={np_} t={t} j={j}: "
+                              f"i0 {line[0]} > i1 {line[1]}")
+                        bad += 1
+    return bad
+
+
 def check_tick_split(limit: int = 5) -> int:
     """tick_split: ticks(a+b) == ticks(b) after ticks(a); chunk safety."""
     bad = 0
@@ -380,6 +421,7 @@ def main() -> int:
     bad += check_delay_injective()
     bad += check_staleness()
     bad += check_window_ordered()
+    bad += check_freshness()
     bad += check_slow_lag()
     bad += check_macro_degenerate()
     bad += check_lanes_step_local()

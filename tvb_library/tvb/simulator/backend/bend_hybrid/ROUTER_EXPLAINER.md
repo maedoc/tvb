@@ -2,7 +2,7 @@
 
 *v2 — expanded: the full law catalogue, routing policies as schedules, sequence diagrams, and the first verified kernel leaf. How the tvb-kh hybrid simulator was re-cast as a verified router, in Bend 2.0.*
 
-**TL;DR.** A TVB hybrid simulation — heterogeneous subnetworks, inter-/intra-projections, monitors, stimuli, multi-rate timesteps — fails in ways that are *structural*, not numerical: a delay outside the history horizon, two projections writing the same coupling slot, a zero-delay read off the end of the ring, a regrouped float sum. We rebuilt the *scheduling and routing* of the simulator as a pure program over natural numbers, stated its correctness as **88 machine-checked laws**, and let the floats be payload — until the last layer, where floats return as *operator-order contracts* (which is exactly what IEEE-754 rounding is). The router that decides *what* the kernel reads and writes, *when*, is proved; the kernel that computes is differential-tested; five negative controls keep the laws honest.
+**TL;DR.** A TVB hybrid simulation — heterogeneous subnetworks, inter-/intra-projections, monitors, stimuli, multi-rate timesteps — fails in ways that are *structural*, not numerical: a delay outside the history horizon, two projections writing the same coupling slot, a zero-delay read off the end of the ring, a regrouped float sum. We rebuilt the *scheduling and routing* of the simulator as a pure program over natural numbers, stated its correctness as **93 machine-checked laws**, and let the floats be payload — until the last layer, where floats return as *operator-order contracts* (which is exactly what IEEE-754 rounding is). The router that decides *what* the kernel reads and writes, *when*, is proved; the kernel that computes is differential-tested; five negative controls keep the laws honest.
 
 Everything below is running code: `bend PROOF_router.bend --verdict` re-checks every proof with a small Lean-proved kernel, and the gate (`tests/run_router.sh`) also runs the negative controls and pinned functional tests.
 
@@ -107,7 +107,7 @@ Two properties make this function trustworthy rather than merely plausible:
 
 Below zero, saturating subtraction lands on sample 0 — the initial-condition fill, exactly like the engines' pre-filled rings (nb_hybrid broadcasts the IC across all horizon slots).
 
-## 5. The law catalogue (88, proved)
+## 5. The law catalogue (93, proved)
 
 Laws follow the Bend convention: `LAWS_router.bend` is the human-owned *claims*, `PROOF_router.bend` the discharge; `bend PROOF_router.bend --verdict` re-checks with a Lean-proved kernel. Grouped:
 
@@ -124,7 +124,9 @@ Laws follow the Bend convention: `LAWS_router.bend` is the human-owned *claims*,
 | `countdown_publish` / `period_from_init` | from any countdown position, exactly `left+1` ticks reach the next publication; exactly one publication per period — **without any div/mod** |
 | `left_det` | parity_audit decision 10's *"identical step grids"*: the countdown evolves as a pure function of `(left, k)`, so equal-k lanes can never drift |
 
-**The list level** (new — the "independently" every multi-lane argument silently assumed): `lanes_step_local` (stepping the whole lane list steps lane i, and only lane i — lanes cannot interact), `route_pointwise` (routing a projection list routes projection i from the same, untouched lanes — projections cannot interact), `tick_split` (a+b master ticks = a then b, at the full `Tick`: the sweep loop may checkpoint anywhere). Together with `writes_unique` these give the router's central safety statement: the multi-lane tick is exactly the parallel composition of per-lane schedules and per-projection reads. Note the bounds witnesses (`lt_ok(i, lanes_len)`) are load-bearing: past the end, `nth_lane`'s default branch would make the claim false — the default `Lane{1,0,0}` steps to `Lane{1,0,1}`, not itself.
+**End-to-end freshness** (new — the router's whole-tick contract, the composition of config → lanes → routing → fresh reads): `route_all_len` (routing is lossless: one line per projection — a dropped projection is a missing coupling edge, a duplicated one a double write), `route_fresh` (each routed line's freshest endpoint never exceeds its source lane's published newest), `read_fresh_tick` / `read_fresh_ticks` (freshness holds after one tick and at every tick — the kernel's hand-off contract, tick-invariant under the sweep loop's chunking), `line_ordered` (i0 ≤ i1 always: the interpolation interval is never inverted).
+
+**The list level** ( — the "independently" every multi-lane argument silently assumed): `lanes_step_local` (stepping the whole lane list steps lane i, and only lane i — lanes cannot interact), `route_pointwise` (routing a projection list routes projection i from the same, untouched lanes — projections cannot interact), `tick_split` (a+b master ticks = a then b, at the full `Tick`: the sweep loop may checkpoint anywhere). Together with `writes_unique` these give the router's central safety statement: the multi-lane tick is exactly the parallel composition of per-lane schedules and per-projection reads. Note the bounds witnesses (`lt_ok(i, lanes_len)`) are load-bearing: past the end, `nth_lane`'s default branch would make the claim false — the default `Lane{1,0,0}` steps to `Lane{1,0,1}`, not itself.
 
 **The read**: `read_fresh`, `clamp_necessary`, `delay_shift` (delay is a pure time shift), `degenerate_read` — at k=1 the routed read *is* the single-dt formula `i0 = t−d`: the multi-dt golden rule ("all k=1 must stay bit-for-bit") as a lemma instead of a golden file. A golden file tells you a run *was* identical; the lemma tells you every run *must* be.
 
