@@ -215,6 +215,27 @@ def nth_lane(ls: List<&2, Lane>, i: Nat) -> Lane:
     case h <> t 1n+p:
       nth_lane(t, p)
 
+def lanes_len(ls: List<&2, Lane>) -> Nat:
+  match ls:
+    case Nil{}:
+      0n
+    case h <> t:
+      Nat.add(1n, lanes_len(t))
+
+def lines_len(ls: List<&2, Line>) -> Nat:
+  match ls:
+    case Nil{}:
+      0n
+    case h <> t:
+      Nat.add(1n, lines_len(t))
+
+def projs_len(ps: List<&2, Proj>) -> Nat:
+  match ps:
+    case Nil{}:
+      0n
+    case h <> t:
+      Nat.add(1n, projs_len(t))
+
 def route_proj(+ls: List<&2, Lane>, +p: Proj) -> Line:
   route_read(lane_newest(nth_lane(ls, proj_src(p))), proj_d(p),
              lane_num(nth_lane(ls, proj_src(p))),
@@ -226,6 +247,24 @@ def route_all(+ls: List<&2, Lane>, ps: List<&2, Proj>) -> List<&2, Line>:
       Nil{}
     case h <> t:
       route_proj(ls, h) <> route_all(ls, t)
+
+def nth_line(ls: List<&2, Line>, i: Nat) -> Line:
+  match ls i:
+    case Nil{} _:
+      Line{0n, 0n, 0n, 1n, 0n}
+    case h <> t 0n:
+      h
+    case h <> t 1n+p:
+      nth_line(t, p)
+
+def nth_proj(ps: List<&2, Proj>, i: Nat) -> Proj:
+  match ps i:
+    case Nil{} _:
+      Proj{0n, 0n, 0n, 0n, 0n}
+    case h <> t 0n:
+      h
+    case h <> t 1n+p:
+      nth_proj(t, p)
 
 type Tick is Data:
   Tick{lanes: List<&2, Lane>, lines: List<&2, Line>}
@@ -243,6 +282,13 @@ def tick_lines(+t: Tick) -> List<&2, Line>:
 def tick(ls: List<&2, Lane>, +ps: List<&2, Proj>) -> Tick:
   +stepped = lanes_step(ls)
   Tick{stepped, route_all(stepped, ps)}
+
+def ticks(t: Nat, +ls: List<&2, Lane>, +ps: List<&2, Proj>) -> Tick:
+  match t:
+    case 0n:
+      Tick{ls, route_all(ls, ps)}
+    case 1n+p:
+      ticks(p, tick_lanes(tick(ls, ps)), ps)
 
 # --------------------------------------------------------------------------
 # Monitors: the temporal-average (tavg) bookkeeping, at Nat level.

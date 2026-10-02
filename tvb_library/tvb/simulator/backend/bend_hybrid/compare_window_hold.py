@@ -195,6 +195,121 @@ def check_window_ordered(limit: int = 12) -> int:
     return bad
 
 
+# --------------------------------------------------------------------------
+# list-level routing: lanes_step_local, route_pointwise, tick_split
+# --------------------------------------------------------------------------
+
+
+def lanes_step_py(ls: list[Lane]) -> list[Lane]:
+    """router.bend lanes_step."""
+    return [l.step() for l in ls]
+
+
+def nth(ls: list, i: int):
+    """router.bend nth_lane/nth_line/nth_proj default-past-end semantics."""
+    return ls[i] if i < len(ls) else None
+
+
+def route_read_py(n: int, d: int, num: int, den: int, win: int) -> tuple:
+    """router.bend route_read -> Line{i0, i1, num, den, win}."""
+    if d == 0:
+        return (n, n, 0, den, win)
+    return (sub(n, d), sub(n, d - 1), num, den, win)
+
+
+def route_proj_py(ls: list[Lane], p: tuple) -> tuple:
+    """router.bend route_proj: (src, tgt, d, win, tc)."""
+    src, tgt, d, win, tc = p
+    lane = nth(ls, src)
+    return route_read_py(lane.newest, d, k_minus_1_minus_left(lane), lane.k, win)
+
+
+def k_minus_1_minus_left(lane: Lane) -> int:
+    """router.bend lane_num = (k-1) - left, saturating."""
+    return sub(sub(lane.k, 1), lane.left)
+
+
+def check_lanes_step_local(limit: int = 6) -> int:
+    """lanes_step_local: nth(lanes_step(ls), i) == step(nth(ls, i)) for i < len."""
+    bad = 0
+    for nl in range(1, limit):
+        for i in range(nl):
+            for k in range(1, 4):
+                ls = [Lane(k, k - 1, j) for j in range(nl)]
+                got = nth(lanes_step_py(ls), i)
+                want = nth(ls, i).step()
+                if (got.k, got.left, got.newest) != (want.k, want.left, want.newest):
+                    print(f"FAIL lanes_step_local nl={nl} i={i} k={k}")
+                    bad += 1
+    # negative control: the bounds witness is load-bearing.  Past the end,
+    # router.bend's nth_lane answers the default Lane{1,0,0} and
+    # lanes_step answers nothing -- but step_lane applied to the default
+    # IS Lane{1,0,1} (its countdown wraps), so the naive unbounded claim
+    #    nth(lanes_step(ls), i) == step(nth(ls, i))
+    # is FALSE at i >= len (left: default, right: stepped default).  The
+    # law's lt_ok(i, lanes_len(ls)) hypothesis exists precisely to keep
+    # that case out of the claim.
+    d = Lane(1, 0, 0)
+    if (d.step().k, d.step().left, d.step().newest) != (1, 0, 1):
+        print("FAIL default-step probe: step of Lane{1,0,0} should be Lane{1,0,1}")
+        bad += 1
+    return bad
+
+
+def check_route_pointwise(limit: int = 5) -> int:
+    """route_pointwise: nth(route_all(ls, ps), i) == route_proj(ls, nth(ps, i))."""
+    bad = 0
+    for nl in range(1, limit):
+        for np_ in range(1, limit):
+            for i in range(np_):
+                ls = [Lane(1 + (j % 3), 0, j) for j in range(nl)]
+                ps = [(j % nl, (j + 1) % nl, j % 2, j % 3, j) for j in range(np_)]
+                routed = [route_proj_py(ls, p) for p in ps]
+                got = nth(routed, i)
+                want = route_proj_py(ls, nth(ps, i))
+                if got != want:
+                    print(f"FAIL route_pointwise nl={nl} np={np_} i={i}: {got} != {want}")
+                    bad += 1
+    return bad
+
+
+def tick_py(ls: list[Lane], ps: list[tuple]) -> tuple:
+    """router.bend tick -> (stepped lanes, routed lines)."""
+    stepped = lanes_step_py(ls)
+    return (stepped, [route_proj_py(stepped, p) for p in ps])
+
+
+def check_tick_split(limit: int = 5) -> int:
+    """tick_split: ticks(a+b) == ticks(b) after ticks(a); chunk safety."""
+    bad = 0
+    for nl in range(1, 4):
+        for np_ in range(1, 4):
+            for a in range(limit):
+                for b in range(limit):
+                    ls = [Lane(1 + (j % 3), j % 2, j) for j in range(nl)]
+                    ps = [(j % nl, (j + 1) % nl, j % 2, 0, j) for j in range(np_)]
+                    # ticks(t): fold tick t times (tick includes route_all)
+                    def ticks(t, ls0):
+                        for _ in range(t):
+                            ls0, lines = tick_py(ls0, ps)
+                        return (ls0, lines)
+                    # note: ticks(0) = (ls0, route_all(ls0)) per router.bend
+                    def ticks_full(t, ls0):
+                        cur = ls0
+                        for _ in range(t):
+                            cur = tick_py(cur, ps)[0]
+                        return (cur, [route_proj_py(cur, p) for p in ps])
+                    left = ticks_full(a + b, ls)
+                    right_pre = ticks_full(a, ls)
+                    right = ticks_full(b, right_pre[0])
+                    lanes_l = [(x.k, x.left, x.newest) for x in left[0]]
+                    lanes_r = [(x.k, x.left, x.newest) for x in right[0]]
+                    if (lanes_l, left[1]) != (lanes_r, right[1]):
+                        print(f"FAIL tick_split nl={nl} np={np_} a={a} b={b}")
+                        bad += 1
+    return bad
+
+
 def main() -> int:
     bad = 0
     bad += check_window_span()
@@ -204,11 +319,15 @@ def main() -> int:
     bad += check_delay_injective()
     bad += check_staleness()
     bad += check_window_ordered()
+    bad += check_lanes_step_local()
+    bad += check_route_pointwise()
+    bad += check_tick_split()
     if bad:
         print(f"{bad} FAILURES")
         return 1
     print("window_span + hold_until_due + left_invariant + delay_injective "
-          "+ staleness (canonical_run/newest_at/stale_bound) + window_ordered: "
+          "+ staleness (canonical_run/newest_at/stale_bound) + window_ordered "
+          "+ list-level routing (lanes_step_local / route_pointwise / tick_split): "
           "all properties hold (exhaustive small range, engine-side)")
     return 0
 

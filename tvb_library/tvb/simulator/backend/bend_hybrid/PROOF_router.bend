@@ -1196,3 +1196,77 @@ def window_ordered_go(n: Nat, +d: Nat, +w: Nat,
 
 def Laws.window_ordered(n, d, w, h):
   window_ordered_go(n, d, w, h)
+
+# --------------------------------------------------------------------------
+# 3c. the list-level routing laws: many lanes, many projections
+# --------------------------------------------------------------------------
+
+# lanes_step_local: induction on ls.  The bounds witness kills the Nil
+# case before it can lie (lt_ok(i, 0) is Empty): the default branch of
+# nth_lane is never reached under the hypothesis.  In the cons case,
+# i = 0 is reflexivity (both sides see the head), and the tail's own
+# bound lt_ok(p, lanes_len(t)) follows from lt_ok(1+p, 1+len) by
+# unfolding le_ok once -- definitional, no rewrite needed.
+# the Nil bounds are absurd: lt_ok(i, 0) is le_ok(1+i, 0), which is
+# Empty for every i (match on i unfolds le_ok to Empty either way).
+def lt_ok_nil_absurd(i: Nat, h: R.le_ok(Nat.add(i, 1n), 0n)) -> Empty:
+  match i h:
+    case 0n h:
+      h
+    case 1n+p h:
+      h
+
+def lanes_step_local_go(+ls: List<&2, R.Lane>, i: Nat,
+                        h: R.lt_ok(i, R.lanes_len(ls)))
+  -> {R.nth_lane(R.lanes_step(ls), i)
+        == R.step_lane(R.nth_lane(ls, i))  : R.Lane}:
+  match ls i h:
+    case Nil{} _ h:
+      Empty.absurd({R.nth_lane(R.lanes_step(Nil{}) , i)
+                      == R.step_lane(R.nth_lane(Nil{}, i)) : R.Lane},
+                     lt_ok_nil_absurd(i, h))
+    case h <> t 0n _:
+      {==}
+    case h <> t 1n+p hlt:
+      lanes_step_local_go(t, p, hlt)
+
+def Laws.lanes_step_local(ls, i, h):
+  lanes_step_local_go(ls, i, h)
+
+# route_pointwise: same shape, on the projection list.  The lanes list
+# is only read (route_proj never consumes it destructively), so the
+# induction is purely on ps; ls rides along as a + parameter.
+def route_pointwise_go(+ls: List<&2, R.Lane>, +ps: List<&2, R.Proj>, i: Nat,
+                       h: R.lt_ok(i, R.projs_len(ps)))
+  -> {R.nth_line(R.route_all(ls, ps), i)
+        == R.route_proj(ls, R.nth_proj(ps, i))  : R.Line}:
+  match ps i h:
+    case Nil{} _ h:
+      Empty.absurd({R.nth_line(R.route_all(ls, Nil{}) , i)
+                      == R.route_proj(ls, R.nth_proj(Nil{}, i)) : R.Line},
+                     lt_ok_nil_absurd(i, h))
+    case h <> t 0n _:
+      {==}
+    case h <> t 1n+p hlt:
+      route_pointwise_go(ls, t, p, hlt)
+
+def Laws.route_pointwise(ls, ps, i, h):
+  route_pointwise_go(ls, ps, i, h)
+
+# tick_split: chunk safety at the full Tick.  Induction on a, exactly
+# as run_segmentable but lifted to the pair: 0 + b = b is reflexivity;
+# 1 + (p + b) peels one tick (ticks steps the FRONT) and the recursive
+# call continues from the stepped lanes -- the go-form puts the
+# shrinking a FIRST so the termination check sees it decrease.
+def tick_split_go(a: Nat, +ls: List<&2, R.Lane>, +ps: List<&2, R.Proj>,
+                  b: Nat)
+  -> {R.ticks(Nat.add(a, b), ls, ps)
+        == R.ticks(b, R.tick_lanes(R.ticks(a, ls, ps)), ps) : R.Tick}:
+  match a:
+    case 0n:
+      {==}
+    case 1n+p:
+      tick_split_go(p, R.tick_lanes(R.tick(ls, ps)), ps, b)
+
+def Laws.tick_split(ls, ps, a, b):
+  tick_split_go(a, ls, ps, b)

@@ -756,3 +756,58 @@ law sub_le_mono:
   for h: {Nat.is_le(a, b) == True{} : Bool}
   for hb: R.le_ok(b, n)
   {Nat.is_le(Nat.sub(n, b), Nat.sub(n, a)) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# 3c. the list-level routing laws: many lanes, many projections
+# --------------------------------------------------------------------------
+# The single-lane laws (lane_hold, due_publishes, ...) pin ONE lane's
+# schedule; the single-projection laws (read_fresh, ...) pin ONE read.
+# The router's whole tick, though, is lanes_step + route_all over LISTS.
+# These three laws lift the pointwise behavior to the list level -- the
+# "independently" that every routing argument silently assumes:
+#   lanes_step_local:  stepping the list steps lane i, and nothing else
+#                      touches lane i -- lanes cannot interact;
+#   route_pointwise:   routing a projection list routes projection i from
+#                      the same lanes -- projections cannot interact;
+#   tick_split:        the sweep loop's chunk safety at the FULL Tick
+#                      (lanes AND routed lines): a+b ticks = a then b,
+#                      the run_segmentable claim at the router's top level.
+#
+# Together with writes_unique (in ok) these give the central safety
+# statement of the router: the multi-lane tick is EXACTLY the parallel
+# composition of per-lane schedules and per-projection reads.
+
+# lane-list locality: stepping the whole list steps each lane
+# independently -- the i-th lane of lanes_step(ls) is exactly
+# step_lane applied to the i-th lane of ls.  The bounds witness
+# (i < lanes_len(ls)) is load-bearing: past the end nth_lane returns the
+# default Lane{1,0,0}, whose step is NOT itself -- exactly the
+# off-by-one the default branch exists to paper over at runtime.
+law lanes_step_local:
+  for +ls: List<&2, R.Lane>
+  for i: Nat
+  for h: R.lt_ok(i, R.lanes_len(ls))
+  {R.nth_lane(R.lanes_step(ls), i) == R.step_lane(R.nth_lane(ls, i))  : R.Lane}
+
+# route_all is pointwise: the i-th line of a routed projection list is
+# exactly route_proj applied to the i-th projection (against the same,
+# untouched lanes).  Bounds witness on the PROJECTION index (the list
+# being indexed); the lanes list is only read, so no bound on it.
+law route_pointwise:
+  for +ls: List<&2, R.Lane>
+  for +ps: List<&2, R.Proj>
+  for i: Nat
+  for h: R.lt_ok(i, R.projs_len(ps))
+  {R.nth_line(R.route_all(ls, ps), i)
+      == R.route_proj(ls, R.nth_proj(ps, i))  : R.Line}
+
+# chunk safety, full-Tick form: running a+b master ticks equals running
+# a, then b, on the whole Tick (lanes and routed lines together).  The
+# sweep loop may checkpoint at ANY boundary; this is why.
+law tick_split:
+  for +ls: List<&2, R.Lane>
+  for +ps: List<&2, R.Proj>
+  for a: Nat
+  for b: Nat
+  {R.ticks(Nat.add(a, b), ls, ps)
+      == R.ticks(b, R.tick_lanes(R.ticks(a, ls, ps)), ps) : R.Tick}
