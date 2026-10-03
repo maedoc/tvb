@@ -2018,3 +2018,58 @@ def Laws.mod_lt(i, cap, h):
 def Laws.ring_first_lap(xs, i, cap, ic, h):
   Equal.cong(Nat, F32, z => H.hist_read(xs, z, ic),
              Nat.mod(i, cap), i, Laws.mod_lt(i, cap, h))
+
+# --------------------------------------------------------------------------
+# 6c. the blend wiring laws: blend_adjacent, clamp_reads_same,
+#     clamp_zero_frac
+# --------------------------------------------------------------------------
+# The interpolation's operands are exactly the router's two cells.
+# d = 0: the clamp makes both cells n and the numerator 0, so the blend
+# reads the newest sample twice with alpha = 0 -- pure {==} refinement,
+# no induction at all.  d = 1+dp: the endpoints are adjacent ticks,
+# i.e. sub(n, dp) == sub(n, 1+dp) + 1.  The witness le_ok(1+dp, n)
+# refines with n: n = 0 is unsatisfiable (needs a destructed dp), and
+# n = 1+np turns it into le_ok(dp, np), which feeds sub_succ_l's Bool
+# hypothesis via le_ok_iff; the remaining regrouping is add_one.
+
+# the n = 0 case is unsatisfiable: le_ok(1+dp, 0n) is Empty once dp is
+# destructed (either shape of dp reduces the le_ok match).
+def blend_adj_zero_absurd(dp: Nat, h: R.le_ok(Nat.add(1n, dp), 0n)) -> Empty:
+  match dp h:
+    case 0n h:
+      h
+    case 1n+q h:
+      h
+
+# adjacency: for an in-history delay the blend's two reads are exactly
+# one tick apart -- the interpolation never bridges a gap wider than 1.
+def blend_adjacent_go(+n: Nat, +dp: Nat, num: Nat, den: Nat, win: Nat,
+  h: R.le_ok(Nat.add(1n, dp), n))
+  -> {R.l_i1(R.route_read(n, 1n+dp, num, den, win))
+    == Nat.add(R.l_i0(R.route_read(n, 1n+dp, num, den, win)), 1n) : Nat}:
+  match n h:
+    case 0n h:
+      Empty.absurd({R.l_i1(R.route_read(0n, 1n+dp, num, den, win))
+                    == Nat.add(R.l_i0(R.route_read(0n, 1n+dp, num, den, win)), 1n) : Nat},
+                   blend_adj_zero_absurd(dp, h))
+    case 1n+np hle:
+      Equal.trans(Nat,
+        Nat.sub(1n+np, dp),
+        Nat.add(1n, Nat.sub(np, dp)),
+        Nat.add(Nat.sub(1n+np, 1n+dp), 1n),
+        Laws.sub_succ_l(np, dp, Laws.le_ok_iff(dp, np, hle)),
+        Laws.add_comm(1n, Nat.sub(np, dp)))
+
+def Laws.blend_adjacent(n, dp, num, den, win, h):
+  blend_adjacent_go(n, dp, num, den, win, h)
+
+# the clamp collapses both operands onto the newest cell: with d = 0,
+# route_read is Line{n, n, 0n, den, win}, so both hist_reads are the
+# same index definitionally.
+def Laws.clamp_reads_same(tape, n, num, den, win, ic):
+  {==}
+
+# the clamp zeroes the fraction: the numerator is 0n definitionally, so
+# alpha = 0.0 and the blend adds zero times the (bogus) delta.
+def Laws.clamp_zero_frac(n, num, den, win):
+  {==}

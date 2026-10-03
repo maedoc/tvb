@@ -672,6 +672,42 @@ def check_ring(limit: int = 8) -> int:
     return bad
 
 
+def check_blend_wiring(limit: int = 8) -> int:
+    """The blend wiring laws, engine-side.
+
+    blend_adjacent: for an in-history delay d = 1+dp (d <= n), the routed
+      line's endpoints are exactly one tick apart: i1 == i0 + 1.
+    clamp_reads_same: at d = 0 both endpoints are the newest sample n.
+    clamp_zero_frac: at d = 0 the numerator is 0 (alpha = 0).
+
+    Negative control: at n = 0, d = 1 the saturating sub collapses both
+    endpoints to 0 -- i1 == i0 + 1 is 0 == 1, FALSE. The in-history
+    witness d <= n is load-bearing (bad/bad_blend_adj.bend).
+    """
+    bad = 0
+    for n in range(limit):
+        for dp in range(limit):
+            for num in (0, 1, 3):
+                for den in (1, 2):
+                    for win in (0, 2):
+                        i0, i1, rnum, _, _ = route_read_py(n, 1 + dp, num, den, win)
+                        if 1 + dp <= n and i1 != i0 + 1:
+                            print(f"FAIL blend_adjacent n={n} dp={dp}: {i1} != {i0}+1")
+                            bad += 1
+                        c0, c1, cnum, _, _ = route_read_py(n, 0, num, den, win)
+                        if c0 != n or c1 != n:
+                            print(f"FAIL clamp_reads_same n={n}: {c0},{c1} != {n},{n}")
+                            bad += 1
+                        if cnum != 0:
+                            print(f"FAIL clamp_zero_frac n={n}: num {cnum} != 0")
+                            bad += 1
+    # negative control: no witness, n = 0, d = 1 -- the endpoints coincide
+    i0, i1, *_ = route_read_py(0, 1, 0, 1, 0)
+    if i1 == i0 + 1:
+        print("FAIL bad_blend_adj probe: 0 == 1 should be false")
+        bad += 1
+    return bad
+
 def main() -> int:
     bad = 0
     bad += check_window_span()
@@ -691,6 +727,7 @@ def main() -> int:
     bad += check_tier1()
     bad += check_history()
     bad += check_ring()
+    bad += check_blend_wiring()
     if bad:
         print(f"{bad} FAILURES")
         return 1
@@ -702,6 +739,9 @@ def main() -> int:
           "read_i0_is_window_head) "
           "+ the tape (read-after-write / stability / IC / prune-shift) "
           "+ the ring bridge (mod_lt / ring_first_lap): "
+          "all properties hold (exhaustive small range, engine-side) "
+          "+ the blend wiring (blend_adjacent / clamp_reads_same / "
+          "clamp_zero_frac): "
           "all properties hold (exhaustive small range, engine-side)")
     return 0
 

@@ -1321,3 +1321,55 @@ law ring_first_lap:
   for +ic: F32
   for h: R.lt_ok(i, cap)
   {H.ring_read(xs, i, cap, ic) == H.hist_read(xs, i, ic) : F32}
+
+# --------------------------------------------------------------------------
+# 6c. the blend wiring: the interpolation's endpoints are the routed cells
+# --------------------------------------------------------------------------
+# The kernel leaf turns a routed Line into a value:
+#     val = blend(hist[i0], hist[i1], alpha),  alpha = num/den
+# The wiring laws pin WHICH tape cells those are.  Two cases, and they
+# are the whole story:
+#   d >= 1 (in history): the endpoints are ADJACENT ticks, n-d and
+#     n-d+1 -- the interpolation never stretches across a gap.
+#   d = 0  (the clamp):  both endpoints are the SAME cell (the newest),
+#     and the fraction is 0 -- the engine's alpha is 0/1, so the blend
+#     degenerates to the newest sample and cannot read one past it.
+
+# adjacency: for an in-history delay d = 1+dp (witness d <= n), the
+# routed line's endpoints are exactly one tick apart -- the blend
+# interpolates between two ADJACENT published samples.
+# The numpy gloss: i1 = i0 + 1, i.e. x1 = hist[n-d+1], x0 = hist[n-d].
+# The witness is load-bearing: at n = 0, d = 1 the saturating sub
+# collapses both endpoints to 0 and the claim is FALSE (bad_blend_adj).
+law blend_adjacent:
+  for +n: Nat
+  for +dp: Nat
+  for +num: Nat
+  for +den: Nat
+  for +win: Nat
+  for h: R.le_ok(Nat.add(1n, dp), n)
+  {R.l_i1(R.route_read(n, 1n+dp, num, den, win))
+    == Nat.add(R.l_i0(R.route_read(n, 1n+dp, num, den, win)), 1n) : Nat}
+
+# the clamp collapses the endpoints onto the newest cell: both blend
+# operands are hist_read(tape, n) -- the zero-delay read IS the newest
+# sample, twice, never one past it.
+law clamp_reads_same:
+  for +tape: List<&2, F32>
+  for +n: Nat
+  for +num: Nat
+  for +den: Nat
+  for +win: Nat
+  for +ic: F32
+  {H.hist_read(tape, R.l_i0(R.route_read(n, 0n, num, den, win)), ic)
+    == H.hist_read(tape, R.l_i1(R.route_read(n, 0n, num, den, win)), ic) : F32}
+
+# the clamp zeroes the fraction: the numerator the engine divides is 0,
+# so alpha = 0.0 and the blend adds zero times the (bogus) delta.  The
+# structural guarantee behind "the clamp read returns the newest value".
+law clamp_zero_frac:
+  for +n: Nat
+  for +num: Nat
+  for +den: Nat
+  for +win: Nat
+  {R.l_num(R.route_read(n, 0n, num, den, win)) == 0n : Nat}
