@@ -635,6 +635,43 @@ def check_history(limit: int = 6) -> int:
     return bad
 
 
+def ring_read_py(xs: list, i: int, cap: int, ic: float) -> float:
+    """hist.bend ring_read: Design B's slot addressing, i %% cap."""
+    return hist_read_py(xs, i % cap, ic) if cap > 0 else ic
+
+
+def check_ring(limit: int = 8) -> int:
+    """The ring bridge, engine-side.
+
+    mod_lt: for i < cap, i %% cap == i (the fence).
+    ring_first_lap: for i < cap, the ring read IS the tape read at i.
+    Negative control: at i = cap the mod wraps to 0 -- the ring silently
+    returns slot 0's sample (the OLDEST), which is the aliasing the
+    cap >= horizon conjunct exists to fence off.
+    """
+    bad = 0
+    for length in range(limit):
+        xs = [float(j + 1) for j in range(length)]
+        for cap in range(1, limit + 2):
+            for i in range(limit + 2):
+                # mod_lt
+                if i < cap and i % cap != i:
+                    print(f"FAIL mod_lt i={i} cap={cap}")
+                    bad += 1
+                # ring_first_lap
+                if i < cap:
+                    if ring_read_py(xs, i, cap, 0.0) != hist_read_py(xs, i, 0.0):
+                        print(f"FAIL ring_first_lap len={length} i={i} cap={cap}")
+                        bad += 1
+    # negative control, engine-side: at i = cap the wrap is REAL
+    xs = [1.5, 2.5]
+    if ring_read_py(xs, 2, 2, 0.0) == hist_read_py(xs, 2, 0.0):
+        # ring answers slot 0 (1.5); tape answers IC (0.0): they differ
+        print("FAIL bad_ring probe: second-lap read should alias slot 0")
+        bad += 1
+    return bad
+
+
 def main() -> int:
     bad = 0
     bad += check_window_span()
@@ -653,6 +690,7 @@ def main() -> int:
     bad += check_non_aliasing()
     bad += check_tier1()
     bad += check_history()
+    bad += check_ring()
     if bad:
         print(f"{bad} FAILURES")
         return 1
@@ -662,7 +700,8 @@ def main() -> int:
           "+ non-aliasing (read_distinct / i0_win_irrelevant / route_distinct) "
           "+ tier-1 (per-index validation / write-uniqueness / "
           "read_i0_is_window_head) "
-          "+ the tape (read-after-write / stability / IC / prune-shift): "
+          "+ the tape (read-after-write / stability / IC / prune-shift) "
+          "+ the ring bridge (mod_lt / ring_first_lap): "
           "all properties hold (exhaustive small range, engine-side)")
     return 0
 

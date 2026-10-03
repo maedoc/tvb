@@ -1290,3 +1290,34 @@ law hist_prune_shift:
   for i: Nat
   {H.hist_read(H.hist_drop(xs, k), i, ic)
     == H.hist_read(xs, Nat.add(k, i), ic) : F32}
+
+# --------------------------------------------------------------------------
+# 6b. the ring bridge: Design B is the tape inside the fence
+# --------------------------------------------------------------------------
+# The engine's flat ring (capacity cap, slot i mod cap) is tied back to
+# the tape by ONE fence: while the read index stays below the capacity,
+# the mod is the identity -- the first lap of the ring IS the tape, slot
+# for slot.  This is where the deferred div/mod debt is paid, once; the
+# router's proved bounds (every live read lies in [n-horizon, n], and
+# ok's shape conjunct will pin horizon <= cap) keep every law-bearing
+# read inside the fence, so the wrap never touches a proved claim.
+
+# the fence: below the capacity, the slot address IS the index.
+# The numpy gloss: for i in range(cap): ring[i % cap] == ring[i].
+law mod_lt:
+  for i: Nat
+  for +cap: Nat
+  for h: R.lt_ok(i, cap)
+  {Nat.mod(i, cap) == i : Nat}
+
+# first-lap exactness: a ring read below the capacity IS the tape read
+# at the same absolute index -- Design B and Design A agree, slot for
+# slot, everywhere the fence holds.  Whatever the tape laws guarantee,
+# the ring delivers below the fence.
+law ring_first_lap:
+  for +xs: List<&2, F32>
+  for i: Nat
+  for +cap: Nat
+  for +ic: F32
+  for h: R.lt_ok(i, cap)
+  {H.ring_read(xs, i, cap, ic) == H.hist_read(xs, i, ic) : F32}

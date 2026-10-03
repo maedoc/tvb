@@ -57,3 +57,12 @@ def hist_drop(xs: List<&2, F32>, k: Nat) -> List<&2, F32>:
       xs
     case h <> t 1n+q:
       hist_drop(t, q)
+
+# ring_read: Design B's flat slot addressing -- the engine's ring reads
+# slot i mod cap of a cap-slot buffer.  The tape is the semantics; the
+# ring is a compression of it, and the bridge is the mod fence law
+# (mod_lt: i < cap makes the slot address EXACTLY i -- the first lap is
+# the tape) plus the prune laws (the live window is the pruned tape).
+# The fence is where the deferred div/mod debt gets paid, once, here.
+def ring_read(xs: List<&2, F32>, i: Nat, +cap: Nat, +ic: F32) -> F32:
+  hist_read(xs, Nat.mod(i, cap), ic)

@@ -80,6 +80,22 @@ Witness load-bearingness is preserved: `hist_snoc_stable`'s
 (the `bad_hist` control: reading at the old length after a snoc returns
 the written value, so the witnessless claim is concretely false).
 
+## Update: the bridge is a theorem (Link R done, 115 laws)
+
+The correspondence is no longer a plan: `mod_lt` proves `i < cap`
+forces `i mod cap == i` (the deferred div/mod debt, paid once, as a
+countdown induction over `Nat.divmod`'s go -- the witness `lt_ok(n,
+1n+m)` refines in lockstep with the countdown, so the witness IS the
+fence), and `ring_first_lap` lifts it through `hist_read` by
+congruence: below the capacity, the ring read IS the tape read at the
+same absolute index.  The `bad_ring` control is the fenceless claim's
+falsity witness: at `i = cap` the mod wraps to slot 0 and the ring
+answers the OLDEST sample as if it were the newest.
+
+What remains of the B story is composition, not new proof machinery:
+the `cap >= horizon` config conjunct, and the (already-proved) router
+read bounds that keep every law-bearing read inside the fence.
+
 ## Float policy (recorded here on purpose)
 
 Bit-exactness is out of the law layer's scope; relative-tolerance

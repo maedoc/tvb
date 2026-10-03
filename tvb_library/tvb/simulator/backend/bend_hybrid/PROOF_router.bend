@@ -1946,3 +1946,75 @@ def hist_prune_shift_go(+xs: List<&2, F32>, k: Nat, +ic: F32, i: Nat)
 
 def Laws.hist_prune_shift(xs, k, ic, i):
   hist_prune_shift_go(xs, k, ic, i)
+
+# --------------------------------------------------------------------------
+# 6b. the ring bridge: mod_lt (the fence), ring_first_lap
+# --------------------------------------------------------------------------
+# The fence is where the deferred div/mod debt is paid, once.  The go
+# countdown consumes n one tick at a time while m decrements; a wrap
+# needs a tick with m = 0, which only the (m+2)-th tick sees, so no wrap
+# happens exactly while n <= m -- stated in the refination-friendly
+# shape lt_ok(n, 1n+m), which peels one level per go step and so makes
+# the whole thing a single lockstep induction (the witness IS the
+# fence).
+
+# the fence's unsatisfiable case: n a successor with countdown m = 0 is
+# below the fence only if p+1 <= 0, which is Empty once p is destructed.
+def mod_lt_r_absurd(p: Nat, h: R.le_ok(Nat.add(p, 1n), 0n)) -> Empty:
+  match p h:
+    case 0n h:
+      h
+    case 1n+q h:
+      h
+
+# the countdown lemma: below the fence the remainder is exactly r + n.
+# Base: n = 0, the go returns (d, r) and r == r + 0.  The n > 0, m = 0
+# case is Empty (the witness refines to it: n <= m = 0 with n a
+# successor is unsatisfiable).  Step: go(1+p, 1+mp, d, r) steps to
+# go(p, mp, d, 1+r), the witness to lt_ok(p, 1+mp), and the sum's
+# regrouping is add_succ.
+def mod_lt_r(n: Nat, m: Nat, +d: Nat, +r: Nat, h: R.lt_ok(n, 1n+m))
+  -> {Pair.snd(Nat, Nat, Nat.divmod.go(n, m, d, r)) == Nat.add(r, n) : Nat}:
+  match n m h:
+    case 0n _ _:
+      Equal.sym(Nat, Nat.add(r, 0n), r, Laws.add_zero(r))
+    case 1n++p 0n h:
+      Empty.absurd({Pair.snd(Nat, Nat, Nat.divmod.go(p, r, 1n+d, 0n))
+                    == Nat.add(r, 1n+p) : Nat},
+                   mod_lt_r_absurd(p, h))
+    case 1n+p 1n+mp hle:
+      Equal.trans(Nat,
+        Pair.snd(Nat, Nat, Nat.divmod.go(p, mp, d, 1n+r)),
+        1n+Nat.add(r, p),
+        Nat.add(r, 1n+p),
+        mod_lt_r(p, mp, d, 1n+r, hle),
+        Equal.sym(Nat, Nat.add(r, 1n+p), 1n+Nat.add(r, p),
+                  Laws.add_succ(r, p)))
+
+# cap = 0 is absurd: lt_ok(i, 0n) is le_ok(i+1, 0n), which is Empty once
+# i is destructed (either case of i reduces the le_ok match).
+def mod_lt_zero_absurd(i: Nat, h: R.lt_ok(i, 0n)) -> Empty:
+  match i h:
+    case 0n h:
+      h
+    case 1n+p h:
+      h
+
+# mod_lt: i < cap forces i mod cap == i -- the first lap is exact.
+# cap = 1n+cp puts divmod in the go form with countdown cp, and the
+# witness lt_ok(i, 1n+cp) is EXACTLY the fence the countdown lemma
+# takes; its result Nat.add(0n, i) reduces to i.
+def Laws.mod_lt(i, cap, h):
+  match cap h:
+    case 0n h:
+      Empty.absurd({Nat.mod(i, 0n) == i : Nat},
+                   mod_lt_zero_absurd(i, h))
+    case 1n+cp hlt:
+      mod_lt_r(i, cp, 0n, 0n, hlt)
+
+# ring_first_lap: below the fence the ring read IS the tape read at the
+# same absolute index -- the mod is the identity there (mod_lt), so
+# Design B and Design A agree slot for slot everywhere lt_ok(i, cap).
+def Laws.ring_first_lap(xs, i, cap, ic, h):
+  Equal.cong(Nat, F32, z => H.hist_read(xs, z, ic),
+             Nat.mod(i, cap), i, Laws.mod_lt(i, cap, h))
