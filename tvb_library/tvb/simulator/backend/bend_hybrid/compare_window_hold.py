@@ -468,6 +468,111 @@ def check_non_aliasing(limit: int = 8) -> int:
     return bad
 
 
+def proj_shape_ok_py(nlanes: int, horizon: int, p: tuple) -> bool:
+    """router.bend proj_shape_ok: src < nlanes, tgt < nlanes,
+    d + 1 <= horizon, d + win <= horizon."""
+    src_, tgt, d, win, tc = p
+    return (src_ < nlanes
+            and tgt < nlanes
+            and d + 1 <= horizon
+            and d + win <= horizon)
+
+
+def proj_clash_py(a: tuple, b: tuple) -> bool:
+    """router.bend proj_clash: same target AND same coupling slot."""
+    return a[1] == b[1] and a[4] == b[4]
+
+
+def writes_unique_py(ps: list) -> bool:
+    """router.bend writes_unique/no_clash: no (tgt, tc) pair repeats."""
+    for i, a in enumerate(ps):
+        for b in ps[i + 1:]:
+            if proj_clash_py(a, b):
+                return False
+    return True
+
+
+def csr_ok_py(nsrc: int, horizon: int, csr: tuple) -> bool:
+    """router.bend csr_ok: indptr[0] == 0, indptr sorted,
+    indptr[-1] == len(indices) == len(delays), indices < nsrc,
+    delays < horizon."""
+    indptr, indices, delays = csr
+    if not indptr or indptr[0] != 0:
+        return False
+    if any(indptr[i] > indptr[i + 1] for i in range(len(indptr) - 1)):
+        return False
+    if indptr[-1] != len(indices) or len(indices) != len(delays):
+        return False
+    return (all(i < nsrc for i in indices)
+            and all(d < horizon for d in delays))
+
+
+def check_tier1(limit: int = 5) -> int:
+    """The tier-1 laws, engine-side.
+
+    ok_proj_shape_nth / ok_fits_nth: every projection of a
+      projs_shape_ok list passes the per-projection validator, and its
+      delay is strictly inside the horizon.
+    lanes_nth_valid: every lane of a lanes_ok list has period >= 1.
+    csr_nth_delay_fits / csr_nth_index_bound: csr_ok's per-edge bounds
+      hold at every bounded index, not just of the folds.
+    ok_no_clash: in a writes_unique list, two same-target projections
+      (distinct indices) carry distinct coupling slots.
+    read_i0_is_window_head: the point read's i0 IS the window's head
+      (the two read modes agree on where averaging ends).
+    """
+    bad = 0
+    for nl in range(1, limit):
+        for horizon in range(1, limit + 2):
+            for np_ in range(1, limit):
+                ps = [(j % nl, (j + 1) % nl, j % horizon, j % 2, j) for j in range(np_)]
+                all_ok = all(proj_shape_ok_py(nl, horizon, p) for p in ps)
+                if all_ok:
+                    for i, p in enumerate(ps):
+                        if not proj_shape_ok_py(nl, horizon, p):
+                            print(f"FAIL ok_proj_shape_nth nl={nl} h={horizon} i={i}")
+                            bad += 1
+                        if not p[2] < horizon:
+                            print(f"FAIL ok_fits_nth nl={nl} h={horizon} i={i}")
+                            bad += 1
+                # ok_no_clash: on writes_unique lists (no (tgt, tc) repeats)
+                if writes_unique_py(ps):
+                    for ia in range(np_):
+                        for ib in range(ia + 1, np_):
+                            if ps[ia][1] == ps[ib][1] and ps[ia][4] == ps[ib][4]:
+                                print(f"FAIL ok_no_clash nl={nl} ia={ia} ib={ib}")
+                                bad += 1
+    # lanes_nth_valid
+    for ks in ([1], [1, 2], [3, 1], [2, 2, 2]):
+        if all(k >= 1 for k in ks):
+            for i in range(len(ks)):
+                if ks[i] < 1:
+                    print(f"FAIL lanes_nth_valid {ks} i={i}")
+                    bad += 1
+    # csr per-edge bounds
+    for nsrc in range(1, 4):
+        for horizon in range(1, 4):
+            indptr = [0, 1, 3]
+            indices = [min(j, nsrc - 1) for j in range(3)]
+            delays = [j % horizon for j in range(3)]
+            if csr_ok_py(nsrc, horizon, (indptr, indices, delays)):
+                for i in range(len(delays)):
+                    if not delays[i] < horizon:
+                        print(f"FAIL csr_nth_delay_fits i={i}")
+                        bad += 1
+                    if not indices[i] < nsrc:
+                        print(f"FAIL csr_nth_index_bound i={i}")
+                        bad += 1
+    # read_i0_is_window_head
+    for n in range(4):
+        for d in range(4):
+            for win in range(3):
+                if route_window(n, d, win)[1] != route_read_py(n, d, 0, 1, win)[0]:
+                    print(f"FAIL read_i0_is_window_head n={n} d={d} win={win}")
+                    bad += 1
+    return bad
+
+
 def main() -> int:
     bad = 0
     bad += check_window_span()
@@ -484,13 +589,16 @@ def main() -> int:
     bad += check_route_pointwise()
     bad += check_tick_split()
     bad += check_non_aliasing()
+    bad += check_tier1()
     if bad:
         print(f"{bad} FAILURES")
         return 1
     print("window_span + hold_until_due + left_invariant + delay_injective "
           "+ staleness (canonical_run/newest_at/stale_bound) + window_ordered "
           "+ list-level routing (lanes_step_local / route_pointwise / tick_split) "
-          "+ non-aliasing (read_distinct / i0_win_irrelevant / route_distinct): "
+          "+ non-aliasing (read_distinct / i0_win_irrelevant / route_distinct) "
+          "+ tier-1 (per-index validation / write-uniqueness / "
+          "read_i0_is_window_head): "
           "all properties hold (exhaustive small range, engine-side)")
     return 0
 

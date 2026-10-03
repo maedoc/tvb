@@ -387,6 +387,18 @@ def nats_len(xs: List<&2, Nat>) -> Nat:
     case h <> t:
       Nat.add(1n, nats_len(t))
 
+# nth element of a Nat list, defaulting to 0 past the end (the same
+# default-past-end convention as nth_lane/nth_proj; the per-index laws
+# carry lt_ok bounds witnesses so the default branch is never trusted)
+def nats_nth(xs: List<&2, Nat>, i: Nat) -> Nat:
+  match xs i:
+    case Nil{} _:
+      0n
+    case h <> t 0n:
+      h
+    case h <> t 1n+p:
+      nats_nth(t, p)
+
 def ok(+c: Config) -> Bool:
   Bool.and(lanes_ok(cfg_lanes(c)),
   Bool.and(projs_shape_ok(nats_len(cfg_lanes(c)), cfg_horizon(c), cfg_projs(c)),

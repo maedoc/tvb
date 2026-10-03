@@ -1109,3 +1109,124 @@ law route_distinct:
                                  R.lane_num(R.nth_lane(ls, R.proj_src(pb))),
                                  R.lane_k(R.nth_lane(ls, R.proj_src(pb))),
                                  R.proj_win(pb)))) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# 5b. the per-index validation laws: ok(cfg) holds of EVERY element
+# --------------------------------------------------------------------------
+
+# an accepted config's projection i (in bounds) satisfies proj_shape_ok:
+# the list-level projs_shape_ok fold is not just true of the fold -- every
+# reachable projection passes the per-projection validator.  This is what
+# lets every downstream ok-conditioned theorem be applied per edge.
+law ok_proj_shape_nth:
+  for +nlanes: Nat
+  for +horizon: Nat
+  for +ps: List<&2, R.Proj>
+  for i: Nat
+  for h: R.lt_ok(i, R.projs_len(ps))
+  for hok: {R.projs_shape_ok(nlanes, horizon, ps) == True{} : Bool}
+  {R.proj_shape_ok(nlanes, horizon, R.nth_proj(ps, i)) == True{} : Bool}
+
+# every accepted projection's delay is strictly inside the horizon, by
+# index -- fits_lt applied at each edge of an accepted projection list.
+law ok_fits_nth:
+  for +nlanes: Nat
+  for +horizon: Nat
+  for +ps: List<&2, R.Proj>
+  for i: Nat
+  for h: R.lt_ok(i, R.projs_len(ps))
+  for hok: {R.projs_shape_ok(nlanes, horizon, ps) == True{} : Bool}
+  {Nat.is_lt(R.proj_d(R.nth_proj(ps, i)), horizon) == True{} : Bool}
+
+# every lane of an accepted config has period >= 1, by index: the
+# monitors/schedule laws that consume lanes_ok can be applied per lane.
+law lanes_nth_valid:
+  for +ks: List<&2, Nat>
+  for i: Nat
+  for h: R.lt_ok(i, R.nats_len(ks))
+  for hok: {R.lanes_ok(ks) == True{} : Bool}
+  {Nat.is_ge(R.nats_nth(ks, i), 1n) == True{} : Bool}
+
+# the CSR per-edge bounds, lifted from the fold: an accepted CSR's edge i
+# (in bounds) has its delay inside the horizon and its index inside the
+# source-node bounds -- csr_ok's conjuncts hold of every reachable edge,
+# not just of the folds.
+law csr_nth_delay_fits:
+  for +nsrc: Nat
+  for +horizon: Nat
+  for +c: R.Csr
+  for i: Nat
+  for h: R.lt_ok(i, R.nats_len(R.csr_delays(c)))
+  for hok: {R.csr_ok(nsrc, horizon, c) == True{} : Bool}
+  {Nat.is_lt(R.nats_nth(R.csr_delays(c), i), horizon) == True{} : Bool}
+
+law csr_nth_index_bound:
+  for +nsrc: Nat
+  for +horizon: Nat
+  for +c: R.Csr
+  for i: Nat
+  for h: R.lt_ok(i, R.nats_len(R.csr_indices(c)))
+  for hok: {R.csr_ok(nsrc, horizon, c) == True{} : Bool}
+  {Nat.is_lt(R.nats_nth(R.csr_indices(c), i), nsrc) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# 5c. the write-uniqueness capstone: ok(cfg) has no double-writes
+# --------------------------------------------------------------------------
+
+# a clash is a PAIR condition: proj_clash(a, b) == False plus target
+# equality forces the coupling slots apart.  (Contrapositive of the
+# constructor: clash = tgt-eq AND tc-eq, so no-clash + tgt-eq gives
+# tc-diseq.)
+law clash_split:
+  for +pa: R.Proj
+  for +pb: R.Proj
+  for hn: {Bool.not(R.proj_clash(pa, pb)) == True{} : Bool}
+  for ht: {Nat.is_eq(R.proj_tgt(pa), R.proj_tgt(pb)) == True{} : Bool}
+  {Nat.is_ne(R.proj_tc(pa), R.proj_tc(pb)) == True{} : Bool}
+
+# no_clash extracts at a bounded index: the fold no_clash(a, ps) checks a
+# against EVERY element, so element i (in bounds) is clash-free with a.
+law no_clash_nth:
+  for +pa: R.Proj
+  for +ps: List<&2, R.Proj>
+  for i: Nat
+  for h: R.lt_ok(i, R.projs_len(ps))
+  for hnc: {R.no_clash(pa, ps) == True{} : Bool}
+  {Bool.not(R.proj_clash(pa, R.nth_proj(ps, i))) == True{} : Bool}
+
+# THE capstone: in an accepted config, two projections writing the SAME
+# target lane at distinct indices carry distinct coupling slots -- a
+# float += into one slot happens at most once per tick.  This is the
+# determinism half of ok's writes_unique conjunct, stated per pair: the
+# order-dependent observable (which value lands in the slot) has no
+# ambiguity to resolve.
+law ok_no_clash:
+  for +ps: List<&2, R.Proj>
+  for ia: Nat
+  for ib: Nat
+  for hltb: {Nat.is_lt(ia, ib) == True{} : Bool}
+  for ha: R.lt_ok(ia, R.projs_len(ps))
+  for hb: R.lt_ok(ib, R.projs_len(ps))
+  for hu: {R.writes_unique(ps) == True{} : Bool}
+  for ht: {Nat.is_eq(R.proj_tgt(R.nth_proj(ps, ia)),
+                     R.proj_tgt(R.nth_proj(ps, ib))) == True{} : Bool}
+  {Nat.is_ne(R.proj_tc(R.nth_proj(ps, ia)),
+             R.proj_tc(R.nth_proj(ps, ib))) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# 5d. the window-mode agreement: the point read and the window agree
+# --------------------------------------------------------------------------
+
+# the point read's start IS the window's head: route_read's i0 and
+# route_window's hi are the same sample n-d, so the two read modes
+# (interpolated point vs averaged window) never disagree on where the
+# averaging interval ends -- the window's newest member is exactly the
+# point the 2-point interpolation would read first.  Unconditional:
+# at d=0 the clamp sets i0 = n and the window head is n-0 = n.
+law read_i0_is_window_head:
+  for +n: Nat
+  for +d: Nat
+  for +num: Nat
+  for +den: Nat
+  for +win: Nat
+  {R.win_hi(R.route_window(n, d, win)) == R.l_i0(R.route_read(n, d, num, den, win)) : Nat}

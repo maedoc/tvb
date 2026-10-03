@@ -1593,3 +1593,267 @@ def route_distinct_go(+ls: List<&2, R.Lane>, +pa: R.Proj, +pb: R.Proj,
 def Laws.route_distinct(ls, pa, pb, hsrc, h, hb):
   route_distinct_go(ls, pa, pb, hsrc, h, hb)
 
+
+# --------------------------------------------------------------------------
+# 5b/5c/5d. the per-index validation, write-uniqueness, window-agreement laws
+# --------------------------------------------------------------------------
+
+# ok_proj_shape_nth: induction on ps, peeling i.  i=0 reads the head, whose
+# proj_shape_ok is the head conjunct of the fold; i=1+q recurses into the
+# tail with the tail conjunct.  The Nil case is absurd (i < 0).
+def projs_shape_ok_nth_go(+nlanes: Nat, +horizon: Nat, +ps: List<&2, R.Proj>,
+                          i: Nat, h: R.lt_ok(i, R.projs_len(ps)),
+                          hok: {R.projs_shape_ok(nlanes, horizon, ps) == True{} : Bool})
+    -> {R.proj_shape_ok(nlanes, horizon, R.nth_proj(ps, i)) == True{} : Bool}:
+  match ps i h:
+    case Nil{} _ h:
+      Empty.absurd({R.proj_shape_ok(nlanes, horizon, R.nth_proj(Nil{}, i)) == True{} : Bool},
+                   lt_ok_nil_absurd(i, h))
+    case p <> t 0n _:
+      and_elim_l_go(R.proj_shape_ok(nlanes, horizon, p),
+                    R.projs_shape_ok(nlanes, horizon, t), hok)
+    case p <> t 1n+q hlt:
+      projs_shape_ok_nth_go(nlanes, horizon, t, q, hlt,
+                            and_elim_r_go(R.proj_shape_ok(nlanes, horizon, p),
+                                          R.projs_shape_ok(nlanes, horizon, t), hok))
+def Laws.ok_proj_shape_nth(nlanes, horizon, ps, i, h, hok):
+  projs_shape_ok_nth_go(nlanes, horizon, ps, i, h, hok)
+
+# ok_fits_nth: proj_shape_ok at index i, then fits_lt's brick.
+def ok_fits_nth_go(+nlanes: Nat, +horizon: Nat, +ps: List<&2, R.Proj>, +i: Nat,
+                   h: R.lt_ok(i, R.projs_len(ps)),
+                   hok: {R.projs_shape_ok(nlanes, horizon, ps) == True{} : Bool})
+    -> {Nat.is_lt(R.proj_d(R.nth_proj(ps, i)), horizon) == True{} : Bool}:
+  lt_of_le_succ_go(R.proj_d(R.nth_proj(ps, i)), horizon,
+                   proj_delay_fits_go(nlanes, horizon, R.nth_proj(ps, i),
+                                      projs_shape_ok_nth_go(nlanes, horizon, ps, i, h, hok)))
+def Laws.ok_fits_nth(nlanes, horizon, ps, i, h, hok):
+  ok_fits_nth_go(nlanes, horizon, ps, i, h, hok)
+
+# lanes_nth_valid: same induction shape on the Nat list.
+def lanes_nth_valid_go(+ks: List<&2, Nat>, i: Nat, h: R.lt_ok(i, R.nats_len(ks)),
+                       hok: {R.lanes_ok(ks) == True{} : Bool})
+    -> {Nat.is_ge(R.nats_nth(ks, i), 1n) == True{} : Bool}:
+  match ks i h:
+    case Nil{} _ h:
+      Empty.absurd({Nat.is_ge(R.nats_nth(Nil{}, i), 1n) == True{} : Bool},
+                   lt_ok_nil_absurd(i, h))
+    case k <> t 0n _:
+      and_elim_l_go(Nat.is_ge(k, 1n), R.lanes_ok(t), hok)
+    case k <> t 1n+q hlt:
+      lanes_nth_valid_go(t, q, hlt,
+                         and_elim_r_go(Nat.is_ge(k, 1n), R.lanes_ok(t), hok))
+def Laws.lanes_nth_valid(ks, i, h, hok):
+  lanes_nth_valid_go(ks, i, h, hok)
+
+# csr_nth_delay_fits / csr_nth_index_bound: csr_ok's last two conjuncts are
+# nats_lt_all folds; peel them to the per-index form by induction on the
+# delays/indices list, i peeling in lockstep.
+def csr_nth_delay_go(+horizon: Nat, +ds: List<&2, Nat>, i: Nat,
+                     h: R.lt_ok(i, R.nats_len(ds)),
+                     hall: {R.nats_lt_all(horizon, ds) == True{} : Bool})
+    -> {Nat.is_lt(R.nats_nth(ds, i), horizon) == True{} : Bool}:
+  match ds i h:
+    case Nil{} _ h:
+      Empty.absurd({Nat.is_lt(R.nats_nth(Nil{}, i), horizon) == True{} : Bool},
+                   lt_ok_nil_absurd(i, h))
+    case d <> t 0n _:
+      and_elim_l_go(Nat.is_lt(d, horizon), R.nats_lt_all(horizon, t), hall)
+    case d <> t 1n+q hlt:
+      csr_nth_delay_go(horizon, t, q, hlt,
+                       and_elim_r_go(Nat.is_lt(d, horizon), R.nats_lt_all(horizon, t), hall))
+
+def csr_nth_index_go(+nsrc: Nat, +xs: List<&2, Nat>, i: Nat,
+                     h: R.lt_ok(i, R.nats_len(xs)),
+                     hall: {R.nats_lt_all(nsrc, xs) == True{} : Bool})
+    -> {Nat.is_lt(R.nats_nth(xs, i), nsrc) == True{} : Bool}:
+  match xs i h:
+    case Nil{} _ h:
+      Empty.absurd({Nat.is_lt(R.nats_nth(Nil{}, i), nsrc) == True{} : Bool},
+                   lt_ok_nil_absurd(i, h))
+    case x <> t 0n _:
+      and_elim_l_go(Nat.is_lt(x, nsrc), R.nats_lt_all(nsrc, t), hall)
+    case x <> t 1n+q hlt:
+      csr_nth_index_go(nsrc, t, q, hlt,
+                       and_elim_r_go(Nat.is_lt(x, nsrc), R.nats_lt_all(nsrc, t), hall))
+
+# peel csr_ok's five conjuncts down to the two nats_lt_all folds, one
+# and_elim_r_go per layer (the same stepped style as proj_win_fits_go)
+def csr_ok_delays_go(+nsrc: Nat, +horizon: Nat, +c: R.Csr,
+                     hok: {R.csr_ok(nsrc, horizon, c) == True{} : Bool})
+    -> {R.nats_lt_all(horizon, R.csr_delays(c)) == True{} : Bool}:
+  h1 = and_elim_r_go(R.csr_first_zero(R.csr_indptr(c)),
+                     Bool.and(R.csr_sorted(R.csr_indptr(c)),
+                              Bool.and(Nat.is_eq(R.nats_last(R.csr_indptr(c)), R.nats_len(R.csr_indices(c))),
+                                       Bool.and(Nat.is_eq(R.nats_len(R.csr_indices(c)), R.nats_len(R.csr_delays(c))),
+                                                Bool.and(R.nats_lt_all(nsrc, R.csr_indices(c)),
+                                                         R.nats_lt_all(horizon, R.csr_delays(c)))))),
+                     hok)
+  h2 = and_elim_r_go(R.csr_sorted(R.csr_indptr(c)),
+                     Bool.and(Nat.is_eq(R.nats_last(R.csr_indptr(c)), R.nats_len(R.csr_indices(c))),
+                              Bool.and(Nat.is_eq(R.nats_len(R.csr_indices(c)), R.nats_len(R.csr_delays(c))),
+                                       Bool.and(R.nats_lt_all(nsrc, R.csr_indices(c)),
+                                                R.nats_lt_all(horizon, R.csr_delays(c))))),
+                     h1)
+  h3 = and_elim_r_go(Nat.is_eq(R.nats_last(R.csr_indptr(c)), R.nats_len(R.csr_indices(c))),
+                     Bool.and(Nat.is_eq(R.nats_len(R.csr_indices(c)), R.nats_len(R.csr_delays(c))),
+                              Bool.and(R.nats_lt_all(nsrc, R.csr_indices(c)),
+                                       R.nats_lt_all(horizon, R.csr_delays(c)))),
+                     h2)
+  h4 = and_elim_r_go(Nat.is_eq(R.nats_len(R.csr_indices(c)), R.nats_len(R.csr_delays(c))),
+                     Bool.and(R.nats_lt_all(nsrc, R.csr_indices(c)),
+                              R.nats_lt_all(horizon, R.csr_delays(c))),
+                     h3)
+  and_elim_r_go(R.nats_lt_all(nsrc, R.csr_indices(c)),
+                R.nats_lt_all(horizon, R.csr_delays(c)), h4)
+
+def csr_ok_indices_go(+nsrc: Nat, +horizon: Nat, +c: R.Csr,
+                      hok: {R.csr_ok(nsrc, horizon, c) == True{} : Bool})
+    -> {R.nats_lt_all(nsrc, R.csr_indices(c)) == True{} : Bool}:
+  h1 = and_elim_r_go(R.csr_first_zero(R.csr_indptr(c)),
+                     Bool.and(R.csr_sorted(R.csr_indptr(c)),
+                              Bool.and(Nat.is_eq(R.nats_last(R.csr_indptr(c)), R.nats_len(R.csr_indices(c))),
+                                       Bool.and(Nat.is_eq(R.nats_len(R.csr_indices(c)), R.nats_len(R.csr_delays(c))),
+                                                Bool.and(R.nats_lt_all(nsrc, R.csr_indices(c)),
+                                                         R.nats_lt_all(horizon, R.csr_delays(c)))))),
+                     hok)
+  h2 = and_elim_r_go(R.csr_sorted(R.csr_indptr(c)),
+                     Bool.and(Nat.is_eq(R.nats_last(R.csr_indptr(c)), R.nats_len(R.csr_indices(c))),
+                              Bool.and(Nat.is_eq(R.nats_len(R.csr_indices(c)), R.nats_len(R.csr_delays(c))),
+                                       Bool.and(R.nats_lt_all(nsrc, R.csr_indices(c)),
+                                                R.nats_lt_all(horizon, R.csr_delays(c))))),
+                     h1)
+  h3 = and_elim_r_go(Nat.is_eq(R.nats_last(R.csr_indptr(c)), R.nats_len(R.csr_indices(c))),
+                     Bool.and(Nat.is_eq(R.nats_len(R.csr_indices(c)), R.nats_len(R.csr_delays(c))),
+                              Bool.and(R.nats_lt_all(nsrc, R.csr_indices(c)),
+                                       R.nats_lt_all(horizon, R.csr_delays(c)))),
+                     h2)
+  and_elim_l_go(R.nats_lt_all(nsrc, R.csr_indices(c)),
+                R.nats_lt_all(horizon, R.csr_delays(c)),
+                and_elim_r_go(Nat.is_eq(R.nats_len(R.csr_indices(c)), R.nats_len(R.csr_delays(c))),
+                              Bool.and(R.nats_lt_all(nsrc, R.csr_indices(c)),
+                                       R.nats_lt_all(horizon, R.csr_delays(c))),
+                              h3))
+
+def Laws.csr_nth_delay_fits(nsrc, horizon, c, i, h, hok):
+  csr_nth_delay_go(horizon, R.csr_delays(c), i, h,
+                   csr_ok_delays_go(nsrc, horizon, c, hok))
+
+def Laws.csr_nth_index_bound(nsrc, horizon, c, i, h, hok):
+  csr_nth_index_go(nsrc, R.csr_indices(c), i, h,
+                   csr_ok_indices_go(nsrc, horizon, c, hok))
+
+# clash_split: proj_clash is the AND of the two deciders; refine it by
+# casing on tgt-eq (given True by ht) and tc-eq.  If tc were also equal
+# the AND would be True and Bool.not of it False, contradicting hn; so
+# the tc-decider must be False, and is_ne of equal Nats is exactly that.
+# the decider pair, each computed once and passed as its own parameter so
+# the match can refine (Bend matches only on parameters, not computed terms)
+def proj_tgt_eq(+pa: R.Proj, +pb: R.Proj) -> Bool:
+  Nat.is_eq(R.proj_tgt(pa), R.proj_tgt(pb))
+
+def proj_tc_eq(+pa: R.Proj, +pb: R.Proj) -> Bool:
+  Nat.is_eq(R.proj_tc(pa), R.proj_tc(pb))
+
+def clash_split_arm(+pa: R.Proj, +pb: R.Proj, +tgt: Bool, +tc: Bool,
+                    hn: {Bool.not(Bool.and(tgt, tc)) == True{} : Bool},
+                    ht: {tgt == True{} : Bool})
+    -> {Bool.not(tc) == True{} : Bool}:
+  match tgt tc hn:
+    case True{} True{} hn:
+      Bool.fne({Bool.not(True{}) == True{} : Bool}, hn)
+    case True{} False{} _:
+      {==}
+    case False{} _ _:
+      Bool.fne({Bool.not(tc) == True{} : Bool},
+               Bool.fne({False{} == True{} : Bool}, ht))
+
+def clash_split_go(+pa: R.Proj, +pb: R.Proj,
+                   hn: {Bool.not(R.proj_clash(pa, pb)) == True{} : Bool},
+                   ht: {Nat.is_eq(R.proj_tgt(pa), R.proj_tgt(pb)) == True{} : Bool})
+    -> {Nat.is_ne(R.proj_tc(pa), R.proj_tc(pb)) == True{} : Bool}:
+  clash_split_arm(pa, pb, proj_tgt_eq(pa, pb), proj_tc_eq(pa, pb), hn, ht)
+
+def Laws.clash_split(pa, pb, hn, ht):
+  clash_split_go(pa, pb, hn, ht)
+
+# no_clash_nth: induction on ps peeling i -- the head conjunct at i=0,
+# the recursive fold at i=1+q.
+def no_clash_nth_go(+pa: R.Proj, +ps: List<&2, R.Proj>, i: Nat,
+                    h: R.lt_ok(i, R.projs_len(ps)),
+                    hnc: {R.no_clash(pa, ps) == True{} : Bool})
+    -> {Bool.not(R.proj_clash(pa, R.nth_proj(ps, i))) == True{} : Bool}:
+  match ps i h:
+    case Nil{} _ h:
+      Empty.absurd({Bool.not(R.proj_clash(pa, R.nth_proj(Nil{}, i))) == True{} : Bool},
+                   lt_ok_nil_absurd(i, h))
+    case p <> t 0n _:
+      and_elim_l_go(Bool.not(R.proj_clash(pa, p)), R.no_clash(pa, t), hnc)
+    case p <> t 1n+q hlt:
+      no_clash_nth_go(pa, t, q, hlt,
+                      and_elim_r_go(Bool.not(R.proj_clash(pa, p)), R.no_clash(pa, t), hnc))
+def Laws.no_clash_nth(pa, ps, i, h, hnc):
+  no_clash_nth_go(pa, ps, i, h, hnc)
+
+# ok_no_clash: double-index induction on (ia, ib) with ia < ib.  Peel ia:
+#   ia=0: ib=1+q' lives in the tail; writes_unique's head conjunct is
+#          no_clash(head, tail), so no_clash_nth at ib-1 in the TAIL gives
+#          clash-free(head, nth(tail, ib-1)) = clash-free(nth(ps,0) vs nth(ps,ib)).
+#   ia=1+q: both live in the tail, which is writes_unique itself.
+# the ia=0, ib=1+q case: the head clashes with nothing in the tail
+# (writes_unique's head conjunct), and clash_split turns that plus the
+# target equality into the slot disequality.  +q so it can appear both
+# in the nth_proj and the no_clash_nth_go index.
+def ok_no_clash_head_go(+p: R.Proj, +t: List<&2, R.Proj>, +q: Nat,
+                        hb: R.lt_ok(q, R.projs_len(t)),
+                        hu: {R.writes_unique(p <> t) == True{} : Bool},
+                        ht: {Nat.is_eq(R.proj_tgt(p), R.proj_tgt(R.nth_proj(t, q))) == True{} : Bool})
+    -> {Nat.is_ne(R.proj_tc(p), R.proj_tc(R.nth_proj(t, q))) == True{} : Bool}:
+  clash_split_go(p, R.nth_proj(t, q),
+                no_clash_nth_go(p, t, q, hb,
+                                and_elim_l_go(R.no_clash(p, t), R.writes_unique(t), hu)),
+                ht)
+
+def ok_no_clash_go(+ps: List<&2, R.Proj>, ia: Nat, ib: Nat,
+                   hltb: {Nat.is_lt(ia, ib) == True{} : Bool},
+                   ha: R.lt_ok(ia, R.projs_len(ps)),
+                   hb: R.lt_ok(ib, R.projs_len(ps)),
+                   hu: {R.writes_unique(ps) == True{} : Bool},
+                   ht: {Nat.is_eq(R.proj_tgt(R.nth_proj(ps, ia)),
+                                  R.proj_tgt(R.nth_proj(ps, ib))) == True{} : Bool})
+    -> {Nat.is_ne(R.proj_tc(R.nth_proj(ps, ia)),
+                  R.proj_tc(R.nth_proj(ps, ib))) == True{} : Bool}:
+  match ps ia ha:
+    case Nil{} _ h:
+      Empty.absurd({Nat.is_ne(R.proj_tc(R.nth_proj(Nil{}, ia)),
+                              R.proj_tc(R.nth_proj(Nil{}, ib))) == True{} : Bool},
+                   lt_ok_nil_absurd(ia, h))
+    case p <> t 0n _:
+      match ib:
+        case 0n:
+          Bool.fne({Nat.is_ne(R.proj_tc(p), R.proj_tc(p)) == True{} : Bool},
+                   Bool.fne({Nat.is_lt(0n, 0n) == True{} : Bool}, hltb))
+        case 1n+q:
+          ok_no_clash_head_go(p, t, q, hb, hu, ht)
+    case p <> t 1n+q hlt:
+      match ib:
+        case 0n:
+          Bool.fne({Nat.is_ne(R.proj_tc(R.nth_proj(t, q)), R.proj_tc(p)) == True{} : Bool},
+                   Bool.fne({Nat.is_lt(1n+q, 0n) == True{} : Bool}, hltb))
+        case 1n+r:
+          ok_no_clash_go(t, q, r, hltb, hlt, hb,
+                         and_elim_r_go(R.no_clash(p, t), R.writes_unique(t), hu),
+                         ht)
+def Laws.ok_no_clash(ps, ia, ib, hltb, ha, hb, hu, ht):
+  ok_no_clash_go(ps, ia, ib, hltb, ha, hb, hu, ht)
+
+# read_i0_is_window_head: both sides reduce to n-d.  At d=0 the clamp
+# sets i0 = n and hi = n-0 = n; at d = 1+dp both are n-(1+dp).  Pure
+# reflexivity after the d split (the sub is stuck on abstract n, so the
+# split is needed to expose the identical normal forms).
+def Laws.read_i0_is_window_head(n, d, num, den, win):
+  match d:
+    case 0n:
+      Laws.sub_zero_r(n)
+    case 1n+dp:
+      {==}
