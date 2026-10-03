@@ -13,6 +13,7 @@ import Base
 import ./LAWS_router.bend as Laws
 import ./router.bend as R
 import ./kernel.bend as K
+import ./hist.bend as H
 
 # False is not True: the motive sends True to Empty, so transporting along a
 # proof of {False == True} lands in Empty and anything follows.
@@ -1857,3 +1858,91 @@ def Laws.read_i0_is_window_head(n, d, num, den, win):
       Laws.sub_zero_r(n)
     case 1n+dp:
       {==}
+
+# --------------------------------------------------------------------------
+# 6. the tape laws (hist.bend): read-after-write, stability, IC, prune-shift
+# --------------------------------------------------------------------------
+
+# hist_read_snoc: reading at the OLD length after a snoc.  Induction on
+# xs.  The Nil case is definitional ({v} <> Nil{} read at 0n is v); the
+# Cons case peels: the read walks into the tail while the length drops by
+# one, so the IH at (p, ic) closes it.
+def hist_read_snoc_go(+xs: List<&2, F32>, +v: F32, +ic: F32)
+  -> {H.hist_read(H.hist_snoc(xs, v), H.hist_len(xs), ic) == v : F32}:
+  match xs:
+    case Nil{}:
+      {==}
+    case h <> t:
+      %hist_read_snoc_go(t, v, ic)
+        : {H.hist_read(H.hist_snoc(t, v), H.hist_len(t), ic) == _ : F32}
+      {==}
+
+def Laws.hist_read_snoc(xs, v, ic):
+  hist_read_snoc_go(xs, v, ic)
+
+# hist_snoc_stable: a read below the top is unchanged by the snoc.  The
+# witness lt_ok(i, len) refines with i: i=0 reads the head (both sides
+# reduce to the same cell); i=1+p recurses into the tail with the
+# refined witness.  The IC parameter is shared, untouched.
+def hist_snoc_stable_go(+xs: List<&2, F32>, +v: F32, +ic: F32, i: Nat,
+                        h: R.lt_ok(i, H.hist_len(xs)))
+  -> {H.hist_read(H.hist_snoc(xs, v), i, ic)
+      == H.hist_read(xs, i, ic) : F32}:
+  match xs i h:
+    case Nil{} _ h:
+      Empty.absurd({H.hist_read(H.hist_snoc(Nil{}, v), i, ic)
+                    == H.hist_read(Nil{}, i, ic) : F32},
+                   lt_ok_nil_absurd(i, h))
+    case h <> t 0n _:
+      {==}
+    case h <> t 1n+p hlt:
+      hist_snoc_stable_go(t, v, ic, p, hlt)
+
+def Laws.hist_snoc_stable(xs, v, ic, i, h):
+  hist_snoc_stable_go(xs, v, ic, i, h)
+
+# hist_read_ic: at or past the length, the read answers the IC fill.
+# Induction on xs with the witness le_ok(len, i): Nil is definitional;
+# Cons refines the witness to le_ok on the tail's length.
+# le_ok(1 + len(t), 0n) is Empty definitionally (the successor case of
+# le_ok), so a Cons whose witness forces i = 0n is absurd
+def le_ok_cons_absurd(+h: F32, +t: List<&2, F32>,
+                      hle: R.le_ok(Nat.add(1n, H.hist_len(t)), 0n)) -> Empty:
+  match h t hle:
+    case _ _ hle:
+      hle
+
+def hist_read_ic_go(+xs: List<&2, F32>, +ic: F32, i: Nat,
+                    h: R.le_ok(H.hist_len(xs), i))
+  -> {H.hist_read(xs, i, ic) == ic : F32}:
+  match xs i h:
+    case Nil{} _ _:
+      {==}
+    case h <> t 0n hle:
+      Empty.absurd({H.hist_read(h <> t, 0n, ic) == ic : F32},
+                   le_ok_cons_absurd(h, t, hle))
+    case h <> t 1n+p hle:
+      hist_read_ic_go(t, ic, p, hle)
+
+def Laws.hist_read_ic(xs, ic, i, h):
+  hist_read_ic_go(xs, ic, i, h)
+
+# hist_prune_shift: dropping k reindexes by exactly k, unconditionally --
+# past the end both sides answer ic, so no witness is needed.  Induction
+# on xs and k together; i is never destructed (it is passed whole to the
+# recursive call, so no lt_ok refinement is needed either).
+def hist_prune_shift_go(+xs: List<&2, F32>, k: Nat, +ic: F32, i: Nat)
+  -> {H.hist_read(H.hist_drop(xs, k), i, ic)
+      == H.hist_read(xs, Nat.add(k, i), ic) : F32}:
+  match xs k:
+    case Nil{} _:
+      {==}
+    case h <> t 0n:
+      {==}
+    case h <> t 1n+q:
+      %hist_prune_shift_go(t, q, ic, i)
+        : {H.hist_read(H.hist_drop(t, q), i, ic) == _ : F32}
+      {==}
+
+def Laws.hist_prune_shift(xs, k, ic, i):
+  hist_prune_shift_go(xs, k, ic, i)

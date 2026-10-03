@@ -25,6 +25,7 @@
 import Base
 import ./router.bend as R
 import ./kernel.bend as K
+import ./hist.bend as H
 
 # --------------------------------------------------------------------------
 # 0. arithmetic helpers, stated once
@@ -1230,3 +1231,62 @@ law read_i0_is_window_head:
   for +den: Nat
   for +win: Nat
   {R.win_hi(R.route_window(n, d, win)) == R.l_i0(R.route_read(n, d, num, den, win)) : Nat}
+
+# --------------------------------------------------------------------------
+# 6. the tape: provenance laws for the history (Design A, hist.bend)
+# --------------------------------------------------------------------------
+# The history joins the router as a proved object.  The tape is the
+# simplest absolute-index structure: element i IS the sample at tick i,
+# the IC value is the default past the end (the nats_nth convention), and
+# these four laws are what every downstream provenance claim composes
+# with.  The runtime memory (FTree, flat ring) needs only satisfy these
+# laws to BE the tape for the law layer -- the representation-
+# independence move that keeps Design B out of every future proof.
+
+# read-after-write: appending v and reading AT THE NEW TOP returns v.
+# The numpy gloss: buf[n] = v; buf[n] == v -- for the tape's addressing,
+# any length, any depth.  This is the load-bearing write path: whatever
+# a lane published this tick IS what a same-tick read at that index sees.
+law hist_read_snoc:
+  for +xs: List<&2, F32>
+  for +v: F32
+  for +ic: F32
+  {H.hist_read(H.hist_snoc(xs, v), H.hist_len(xs), ic) == v : F32}
+
+# stability: appending at the top never changes any read below the top.
+# The numpy gloss: pushing new samples cannot retroactively alter old
+# entries -- the property that makes the tape a legal co-simulation
+# memory (the sweep loop may checkpoint anywhere; tick_split's partner
+# on the data plane).
+law hist_snoc_stable:
+  for +xs: List<&2, F32>
+  for +v: F32
+  for +ic: F32
+  for i: Nat
+  for h: R.lt_ok(i, H.hist_len(xs))
+  {H.hist_read(H.hist_snoc(xs, v), i, ic) == H.hist_read(xs, i, ic) : F32}
+
+# IC region: a read at or past the tape's length answers the IC fill,
+# never a stale cell -- the engine's buffer pre-fill, as a guarantee.
+law hist_read_ic:
+  for +xs: List<&2, F32>
+  for +ic: F32
+  for i: Nat
+  for h: R.le_ok(H.hist_len(xs), i)
+  {H.hist_read(xs, i, ic) == ic : F32}
+
+# prune-shift: dropping the k oldest samples reindexes the survivors
+# exactly -- position i of the pruned tape IS absolute tick i+k, for any
+# i below the pruned length.  The numpy gloss: buf2 = buf[k:]; then
+# buf2[i] == buf[i+k].  This is the sliding-window law that gives the
+# tape the ring's constant memory without the ring's law tax.
+# (Unconditional: past the tape's end both sides answer the IC fill, so
+# the shift law needs no bounds witness -- the only laws that carry
+# witnesses here are stability and IC, where the witness is load-bearing.)
+law hist_prune_shift:
+  for +xs: List<&2, F32>
+  for k: Nat
+  for +ic: F32
+  for i: Nat
+  {H.hist_read(H.hist_drop(xs, k), i, ic)
+    == H.hist_read(xs, Nat.add(k, i), ic) : F32}

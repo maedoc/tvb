@@ -573,6 +573,68 @@ def check_tier1(limit: int = 5) -> int:
     return bad
 
 
+def hist_read_py(xs: list, i: int, ic: float) -> float:
+    """hist.bend hist_read: element i is the sample at tick i; ic past end."""
+    return xs[i] if i < len(xs) else ic
+
+
+def hist_snoc_py(xs: list, v: float) -> list:
+    """hist.bend hist_snoc: append at the far end (the next tick)."""
+    return xs + [v]
+
+
+def hist_drop_py(xs: list, k: int) -> list:
+    """hist.bend hist_drop: drop the k oldest samples."""
+    return xs[k:]
+
+
+def check_history(limit: int = 6) -> int:
+    """The tape laws, engine-side.
+
+    hist_read_snoc: appending v and reading at the old length returns v.
+    hist_snoc_stable: appending never changes reads below the old length.
+    hist_read_ic: reads at or past the length answer the IC fill.
+    hist_prune_shift: buf[k:][i] == buf[i+k], including past the end
+      (both sides answer IC -- the law is unconditional).
+    """
+    import random
+    rng = random.Random(20261002)
+    bad = 0
+    for length in range(limit):
+        xs = [rng.random() for _ in range(length)]
+        for v in (0.5, -1.0):
+            for ic in (0.0, 9.0):
+                for i in range(limit + 2):
+                    # hist_read_snoc
+                    if hist_read_py(hist_snoc_py(xs, v), length, ic) != v:
+                        print(f"FAIL hist_read_snoc len={length} v={v}")
+                        bad += 1
+                    # hist_snoc_stable (only below the old length)
+                    if i < length:
+                        if hist_read_py(hist_snoc_py(xs, v), i, ic) != \
+                           hist_read_py(xs, i, ic):
+                            print(f"FAIL hist_snoc_stable len={length} i={i}")
+                            bad += 1
+                    # hist_read_ic
+                    if i >= length:
+                        if hist_read_py(xs, i, ic) != ic:
+                            print(f"FAIL hist_read_ic len={length} i={i}")
+                            bad += 1
+                    # hist_prune_shift (unconditional)
+                    for k in range(limit + 2):
+                        if hist_read_py(hist_drop_py(xs, k), i, ic) != \
+                           hist_read_py(xs, i + k, ic):
+                            print(f"FAIL hist_prune_shift len={length} "
+                                  f"k={k} i={i}")
+                            bad += 1
+    # negative control, engine-side: stability AT the top is FALSE -- the
+    # snoc just wrote there, so the read is v, not the IC fill
+    if hist_read_py(hist_snoc_py([1.0], 2.5), 1, 0.0) == 0.0:
+        print("FAIL bad_hist probe: read at the old length should be v")
+        bad += 1
+    return bad
+
+
 def main() -> int:
     bad = 0
     bad += check_window_span()
@@ -590,6 +652,7 @@ def main() -> int:
     bad += check_tick_split()
     bad += check_non_aliasing()
     bad += check_tier1()
+    bad += check_history()
     if bad:
         print(f"{bad} FAILURES")
         return 1
@@ -598,7 +661,8 @@ def main() -> int:
           "+ list-level routing (lanes_step_local / route_pointwise / tick_split) "
           "+ non-aliasing (read_distinct / i0_win_irrelevant / route_distinct) "
           "+ tier-1 (per-index validation / write-uniqueness / "
-          "read_i0_is_window_head): "
+          "read_i0_is_window_head) "
+          "+ the tape (read-after-write / stability / IC / prune-shift): "
           "all properties hold (exhaustive small range, engine-side)")
     return 0
 

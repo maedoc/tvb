@@ -2,7 +2,7 @@
 
 *v2 — expanded: the full law catalogue, routing policies as schedules, sequence diagrams, and the first verified kernel leaf. How the tvb-kh hybrid simulator was re-cast as a verified router, in Bend 2.0.*
 
-**TL;DR.** A TVB hybrid simulation — heterogeneous subnetworks, inter-/intra-projections, monitors, stimuli, multi-rate timesteps — fails in ways that are *structural*, not numerical: a delay outside the history horizon, two projections writing the same coupling slot, two delays aliasing onto the same ring slot, a zero-delay read off the end of the ring, a regrouped float sum. We rebuilt the *scheduling and routing* of the simulator as a pure program over natural numbers, stated its correctness as **109 machine-checked laws**, and let the floats be payload — until the last layer, where floats return as *operator-order contracts* (which is exactly what IEEE-754 rounding is). The router that decides *what* the kernel reads and writes, *when*, is proved; the kernel that computes is differential-tested; ten negative controls keep the laws honest.
+**TL;DR.** A TVB hybrid simulation — heterogeneous subnetworks, inter-/intra-projections, monitors, stimuli, multi-rate timesteps — fails in ways that are *structural*, not numerical: a delay outside the history horizon, two projections writing the same coupling slot, two delays aliasing onto the same ring slot, a zero-delay read off the end of the ring, a regrouped float sum. We rebuilt the *scheduling and routing* of the simulator as a pure program over natural numbers, stated its correctness as **113 machine-checked laws**, and let the floats be payload — until the last layer, where floats return as *operator-order contracts* (which is exactly what IEEE-754 rounding is). The router that decides *what* the kernel reads and writes, *when*, is proved; the kernel that computes is differential-tested; eleven negative controls keep the laws honest.
 
 Everything below is running code: `bend PROOF_router.bend --verdict` re-checks every proof with a small Lean-proved kernel, and the gate (`tests/run_router.sh`) also runs the negative controls and pinned functional tests.
 
@@ -107,7 +107,7 @@ Two properties make this function trustworthy rather than merely plausible:
 
 Below zero, saturating subtraction lands on sample 0 — the initial-condition fill, exactly like the engines' pre-filled rings (nb_hybrid broadcasts the IC across all horizon slots).
 
-## 5. The law catalogue (109, proved)
+## 5. The law catalogue (113, proved)
 
 Laws follow the Bend convention: `LAWS_router.bend` is the human-owned *claims*, `PROOF_router.bend` the discharge; `bend PROOF_router.bend --verdict` re-checks with a Lean-proved kernel. Grouped:
 
@@ -137,6 +137,8 @@ Laws follow the Bend convention: `LAWS_router.bend` is the human-owned *claims*,
 **The list level** ( — the "independently" every multi-lane argument silently assumed): `lanes_step_local` (stepping the whole lane list steps lane i, and only lane i — lanes cannot interact), `route_pointwise` (routing a projection list routes projection i from the same, untouched lanes — projections cannot interact), `tick_split` (a+b master ticks = a then b, at the full `Tick`: the sweep loop may checkpoint anywhere). Together with `writes_unique` these give the router's central safety statement: the multi-lane tick is exactly the parallel composition of per-lane schedules and per-projection reads. Note the bounds witnesses (`lt_ok(i, lanes_len)`) are load-bearing: past the end, `nth_lane`'s default branch would make the claim false — the default `Lane{1,0,0}` steps to `Lane{1,0,1}`, not itself.
 
 **The read**: `read_fresh`, `clamp_necessary`, `delay_shift` (delay is a pure time shift), `degenerate_read` — at k=1 the routed read *is* the single-dt formula `i0 = t−d`: the multi-dt golden rule ("all k=1 must stay bit-for-bit") as a lemma instead of a golden file. A golden file tells you a run *was* identical; the lemma tells you every run *must* be.
+
+**The tape** (new — the history joins the router as a proved object; see `HISTORY_DESIGN.md`): `hist_read_snoc` (read-after-write: appending `v` and reading at the old length returns `v` — whatever a lane published this tick IS what a same-tick read at that index sees), `hist_snoc_stable` (appending never changes reads below the top — the co-simulation memory legality, `tick_split`'s data-plane partner), `hist_read_ic` (reads at or past the length answer the IC fill, never a stale cell — the engine's buffer pre-fill as a guarantee), `hist_prune_shift` (dropping the `k` oldest samples reindexes survivors exactly: `buf[k:][i] == buf[i+k]`, *unconditionally* — past the end both sides answer IC, so the sliding window needs no bounds witness). The tape is the simplest absolute-index structure (element `i` IS tick `i`'s sample, the `nats_nth` convention); the runtime memory (FTree, flat ring) needs only *satisfy* these four laws to BE the tape for the law layer — the representation-independence move that keeps Design B out of every future proof. The `bad_hist` control proves the witnessless stability claim is false.
 
 **Configuration tree**: `ok` plus four accept/reject instances (bad period, over-horizon delay, write collision).
 
@@ -319,14 +321,14 @@ Proofs alone are not enough — a mistranscription that goes *into both the code
 flowchart TD
     LAWS["LAWS_router.bend — human-owned claims"] --> PROOF["PROOF_router.bend — proofs"]
     PROOF --> VDT{"--verdict:<br/>Lean-proved kernel<br/>re-checks every proof"}
-    BAD["bad/ — 10 negative controls:<br/>each must be REJECTED"] --> GATE
-    TESTS["tests/ — 3 functional runs,<br/>outputs pinned by #| lines"] --> GATE
+    BAD["bad/ — 11 negative controls:<br/>each must be REJECTED"] --> GATE
+    TESTS["tests/ — 4 functional runs,<br/>outputs pinned by #| lines"] --> GATE
     GATE{"tests/run_router.sh"} --> OK["all green"]
     PROP["Python property harness —<br/>random configs attack ok()/csr_ok()"] -. planned .-> GATE
     DIFF["differential compare vs numba —<br/>float-level fidelity"] -. stays in Python .-> OK
 ```
 
-The negative controls are non-negotiable discipline: the hand-rolled ordering decider was wrong twice in this project, and the only thing that caught it was a deliberately false claim (`x < x`) that *must* be rejected. The current controls: irreflexivity, "the unguarded read is fresh" (mirror of `clamp_necessary`), a fabricated out-of-history witness, "a colliding config is valid", the regrouped blend, the json-time wrap, the fabricated count — and, new, `bad_alias.bend`: the non-aliasing claim *without* the horizon witness, which is exactly the IC-fill aliasing at `n = 0` the witness exists to exclude — and `bad_uniq.bend`: the write-uniqueness capstone *without* the distinct-index witness, claiming two identical projections at distinct list positions have distinct coupling slots (concretely false at indices 0/1 with two `Proj{0,0,1,0,0}`s). One more lesson from the field: **positive instance laws are load-bearing** — a validator bug (`nats_last` returning 0 for every list) passed all *negative* controls vacuously and was caught only by the positive `csr_ok_good` claim.
+The negative controls are non-negotiable discipline: the hand-rolled ordering decider was wrong twice in this project, and the only thing that caught it was a deliberately false claim (`x < x`) that *must* be rejected. The current controls: irreflexivity, "the unguarded read is fresh" (mirror of `clamp_necessary`), a fabricated out-of-history witness, "a colliding config is valid", the regrouped blend, the json-time wrap, the fabricated count — and, new, `bad_alias.bend`: the non-aliasing claim *without* the horizon witness, which is exactly the IC-fill aliasing at `n = 0` the witness exists to exclude — `bad_uniq.bend`: the write-uniqueness capstone *without* the distinct-index witness (two identical `Proj{0,0,1,0,0}`s at indices 0/1), and `bad_hist.bend`: the tape's stability law *without* the bounds witness — reading at the old length after a snoc, where the tape now holds the written value (`2.5 == 0.0`, unprovable), the exact off-by-one `lt_ok(i, hist_len)` exists to exclude. One more lesson from the field: **positive instance laws are load-bearing** — a validator bug (`nats_last` returning 0 for every list) passed all *negative* controls vacuously and was caught only by the positive `csr_ok_good` claim.
 
 ## 10. What this deliberately does not do
 
@@ -336,6 +338,7 @@ The negative controls are non-negotiable discipline: the hand-rolled ordering de
 
 ## 11. Where this goes next
 
+- **The tape is proved (Link 1 done).** The history's four provenance laws (read-after-write, stability, IC region, prune-shift) are machine-checked, with the representation-independence move recorded in `HISTORY_DESIGN.md`: the FTree/ring runtime needs only satisfy the laws to be the tape. Next: the ring correspondence theorem (`cap >= horizon`, with a `bad_ring` control), then the blend-wiring law (Link 2), the CSR slice theorem (Link 3), and the end-to-end capstone (Link 4).
 - **Tier-1 closure is done.** The per-index validation lifts, the write-uniqueness capstone (`ok_no_clash`, with the `bad_uniq` control) and the window-mode agreement (`read_i0_is_window_head`) close the roadmap's tier 1: every remaining prose guarantee about routing, timing and write safety is now a machine-checked law.
 - **More policies, more theorems.** Both macro-first laws are now proved: the degenerate gate (`macro_degenerate`: at k=1 the co-simulation read IS the staggered point read) and the slow-side lag necessity (`window_head_age` + `slow_lag_bound`: the slow lane's windowed input head is exactly d+k ticks behind the stream head — forced, not chosen). The routing table's three policies are now fully fenced by laws.
 - **Non-aliasing is now a theorem, not a comment.** The csr comment's warning — a horizon too small "would alias two distinct delays onto the same buffer slot" — is now the `route_distinct` chain: `ok` → `fits_lt` → `read_distinct` → distinct routed reads. The horizon witness `le_ok(db, n)` is load-bearing (the `bad_alias` control proves the witnessless claim is false), which is the same lesson as `delay_injective` but end-to-end through routing.
@@ -345,4 +348,4 @@ The negative controls are non-negotiable discipline: the hand-rolled ordering de
 
 ---
 
-*Source: `tvb-kh`, `tvb_library/tvb/simulator/backend/bend_hybrid/` — `router.bend` (routing core), `kernel.bend` (leaf layer), `LAWS_router.bend` (claims), `PROOF_router.bend` (proofs), `bad/` (negative controls), `tests/run_router.sh` (the gate). Multi-dt context: the hybrid backends' pinned decisions (parity_audit.md §6); the anti-alias window is the router's `win` field; the 2-point read is `route_read`'s `d ≥ 1` branch.*
+*Source: `tvb-kh`, `tvb_library/tvb/simulator/backend/bend_hybrid/` — `router.bend` (routing core), `hist.bend` (the tape), `kernel.bend` (leaf layer), `LAWS_router.bend` (claims), `PROOF_router.bend` (proofs), `bad/` (negative controls), `tests/run_router.sh` (the gate). Multi-dt context: the hybrid backends' pinned decisions (parity_audit.md §6); the anti-alias window is the router's `win` field; the 2-point read is `route_read`'s `d ≥ 1` branch.*

@@ -59,6 +59,27 @@ object in the law layer -- and histories in TVB engines come in two shapes:
 - **B's only edge is constant memory, which A matches** once the pruning
   corollary exists (keep `horizon + margin` leaves, drop the rest).
 
+## Update, post-implementation (Link 1 done, 113 laws)
+
+The tape landed as the SIMPLEST absolute-index structure rather than the
+size-metadata FTree first sketched: a cons list of samples where element
+`i` IS the sample at tick `i`, IC supplied at read time (`hist.bend`; the
+`nats_nth` convention). Two lessons drove the simplification:
+
+- the size/split metadata would have made every induction carry a shape
+  invariant before any provenance claim could even be stated;
+- absolute-index-from-zero makes the four laws plain list inductions,
+  and `hist_prune_shift` came out UNCONDITIONAL (past the end both sides
+  answer IC), shedding the bounds witnesses the first draft carried.
+
+The FTree remains the intended RUNTIME representation; the laws are the
+specification it must satisfy (representation independence), and the
+ring correspondence theorem is still the single bridge for Design B.
+Witness load-bearingness is preserved: `hist_snoc_stable`'s
+`lt_ok(i, hist_len)` excludes the off-by-one at the write index itself
+(the `bad_hist` control: reading at the old length after a snoc returns
+the written value, so the witnessless claim is concretely false).
+
 ## Float policy (recorded here on purpose)
 
 Bit-exactness is out of the law layer's scope; relative-tolerance
