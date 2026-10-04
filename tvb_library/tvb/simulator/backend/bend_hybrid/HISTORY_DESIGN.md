@@ -96,6 +96,40 @@ What remains of the B story is composition, not new proof machinery:
 the `cap >= horizon` config conjunct, and the (already-proved) router
 read bounds that keep every law-bearing read inside the fence.
 
+## Update: the config side is closed (Link 5a done)
+
+The `cap >= horizon` conjunct landed as the companion gate `ok_cap(c, cap)`
+(`Nat.is_le(cfg_horizon(c), cap)`), with the capacity an ENGINE parameter
+rather than a Config field: the engine sizes its ring (`hslots =
+next_pow2(max_delay+1)`, a power of two for bit-mask addressing) and hands
+it to the law layer, so the config tree stays engine-agnostic and the
+JSON ingress is untouched -- the conjunct is a gate over (config, ring)
+pairs, which is the shape the correspondence consumes anyway.  The
+positive instance `ok_cap_good` pins the tight case (GOOD's horizon 4 =
+exactly the hslots nb_hybrid would allocate); `ok_cap_bad` rejects the
+under-capacity ring; and the `bad_cap` control is the aliasing made
+concrete at an index the horizon window legitimately covers: on the tape
+[1.5, 2.5, 3.5] with cap = 3 < horizon = 4, the in-window read at i = 4
+wraps to slot 1 and answers the wrong sample (2.5 == 0.0, unprovable).
+
+## Update: the read-window bound is closed (Link 5b done)
+
+The router's half of the composition is the pair `read_window_lo` /
+`csr_window_lo`: for an accepted config (per projection, per CSR edge),
+the oldest cell any law-bearing read can name lies at or behind
+`n - horizon`.  The proof needed exactly one new brick: `sub_antitone`
+(saturating sub is antitone UNCONDITIONALLY -- the witness `le_ok(b, n)`
+of the earlier `sub_le_mono` was never consumed by its induction, and
+the lower-bound direction never needed it).  Conjoined with `read_fresh`
+(i1 <= n), every law-bearing read of an accepted config is now machine-
+checked to lie inside `[n - horizon, n]` -- exactly the window the ring
+must cover, per read.
+
+What remains is the ring side proper: the slot-addressed buffer model,
+the one-lap correspondence theorem, and the composed capstone (an
+accepted config over an ok_cap ring delivers the tape's leaf), which is
+one induction over one lap of the buffer.
+
 ## Float policy (recorded here on purpose)
 
 Bit-exactness is out of the law layer's scope; relative-tolerance

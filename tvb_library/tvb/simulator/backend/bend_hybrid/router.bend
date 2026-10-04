@@ -404,6 +404,20 @@ def ok(+c: Config) -> Bool:
   Bool.and(projs_shape_ok(nats_len(cfg_lanes(c)), cfg_horizon(c), cfg_projs(c)),
            writes_unique(cfg_projs(c))))
 
+# the capacity gate, the engine-side half of the ring contract: the
+# history backend's ring must hold the whole horizon, or two ticks one
+# horizon apart would land on the SAME slot (the aliasing bad_ring is a
+# falsity witness for).  The capacity is ENGINE data -- the engine sizes
+# its ring (hslots = next_pow2(max_delay+1), a power of two for the
+# bit-mask addressing) and hands it to the law layer as a parameter, so
+# the conjunct is a companion gate rather than a Config field (the
+# config tree stays engine-agnostic; the JSON ingress constructs
+# configs, not rings).  ok + ok_cap together accept exactly the
+# configurations the proved backend may run: shape-correct routing
+# over a ring that provably cannot alias the horizon.
+def ok_cap(+c: Config, +cap: Nat) -> Bool:
+  Nat.is_le(cfg_horizon(c), cap)
+
 # the Q2 anti-alias read: an average over the w source samples ending at
 # the delayed newest, as a window record.  Bounds laws are instance-level
 # for now (see LAWS_router.window_instance).

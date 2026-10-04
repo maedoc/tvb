@@ -1472,3 +1472,105 @@ law row_lines_good_1:
                    1n)
     == R.edge(R.lane_init(1n) <> R.lane_init(2n) <> Nil{}, 1n, 2n) <> Nil{}
     : List<&2, R.Line>}
+
+# --------------------------------------------------------------------------
+# 7. the cap >= horizon closure: the ring side of the capstone
+# --------------------------------------------------------------------------
+# The ladder is complete through the routing table (Link 4): target t's
+# table IS the configured (src, delay) edges, and each line's blend reads
+# the right tape cells (Link 2).  What remained for the ring story is
+# COMPOSITION, and this section closes it in three moves:
+#
+#   ok_cap       the config/engine contract: horizon <= cap.  The engine
+#                sizes its ring (hslots = next_pow2(max_delay+1), a power
+#                of two for bit-mask addressing) and hands the capacity to
+#                the law layer as a parameter, so the conjunct is a
+#                companion gate (router.bend's ok_cap), not a Config field
+#                -- the config tree stays engine-agnostic.  This is the
+#                "cap >= horizon enters ok as a config conjunct" the
+#                design record promised, in the shape the layer actually
+#                consumes it.
+#   read_window  every law-bearing read of an accepted config lies inside
+#                [n - horizon, n]: the upper end is read_fresh, the lower
+#                end is the delay/window-fits conjuncts of proj_shape_ok
+#                composed with sub_antitone (below).  This is the fence
+#                condition the ring bridge needs, per read.
+#   ring_side    (section 7b) the slot-addressed buffer, the one-lap
+#                correspondence theorem, and the composed capstone: for
+#                an accepted config over an ok_cap ring, every routed
+#                read's ring slot delivers the tape's leaf.
+# --------------------------------------------------------------------------
+
+# 7a. the capacity gate and the read-window bound
+# --------------------------------------------------------------------------
+
+# the positive instance: GOOD()'s horizon 4 fits the engine's canonical
+# ring size for its worst delay, next_pow2(3+1) = 4 -- exactly the hslots
+# nb_hybrid would allocate.  cap = horizon is the tightest capacity the
+# gate accepts.
+law ok_cap_good:
+  {R.ok_cap(GOOD(), 4n) == True{} : Bool}
+
+# the negative instance: a ring smaller than the horizon is rejected --
+# two ticks one horizon apart would share a slot (bad_ring's aliasing,
+# as a config-level failure).
+law ok_cap_bad:
+  {R.ok_cap(GOOD(), 3n) == False{} : Bool}
+
+# ok_cap inverts to the capacity order, Bool form (the le_ok_iff bridge's
+# consumer-side twin: proofs that need the ORDER fact, not the decider).
+law ok_cap_le:
+  for +c: R.Config
+  for +cap: Nat
+  for +h: {R.ok_cap(c, cap) == True{} : Bool}
+  {Nat.is_le(R.cfg_horizon(c), cap) == True{} : Bool}
+
+# saturating sub is antitone UNCONDITIONALLY: cancelling more leaves
+# less-or-equal, saturation included (the saturated side collapses to 0,
+# which is <= anything).  sub_le_mono needed the in-history witness to
+# keep BOTH sides honest; the lower-bound half only needs the antitonic
+# direction, and there the saturation is free.
+law sub_antitone:
+  for n: Nat
+  for a: Nat
+  for b: Nat
+  for +h: {Nat.is_le(a, b) == True{} : Bool}
+  {Nat.is_le(Nat.sub(n, b), Nat.sub(n, a)) == True{} : Bool}
+
+# THE read-window law: every law-bearing read of an accepted projection
+# lies at or behind n - horizon.  p's delay fits (d+1 <= horizon) and its
+# window fits (d+win <= horizon), so the OLDEST cell any read can name is
+# n - (d + win) >= n - horizon: the horizon is exactly the worst-case
+# depth.  With read_fresh (i1 <= n) this pins every law-bearing read
+# inside [n - horizon, n] -- the window the ring must cover, per read.
+law read_window_lo:
+  for +n: Nat
+  for +nlanes: Nat
+  for +horizon: Nat
+  for +p: R.Proj
+  for +h: {R.proj_shape_ok(nlanes, horizon, p) == True{} : Bool}
+  {Nat.is_le(Nat.sub(n, horizon),
+             Nat.sub(n, Nat.add(R.proj_d(p), R.proj_win(p)))) == True{} : Bool}
+
+# the CSR form of the same bound: every law-bearing CSR read (per-edge
+# delay, point reads: win = 0) also lies at or behind n - horizon.  The
+# csr_ok delays are strictly inside the horizon, so n - d >= n - horizon
+# by antitonicity alone -- the fold's reads are inside the same window.
+law csr_window_lo:
+  for +n: Nat
+  for +nsrc: Nat
+  for +horizon: Nat
+  for +c: R.Csr
+  for +i: Nat
+  for +h: {R.csr_ok(nsrc, horizon, c) == True{} : Bool}
+  {Nat.is_le(Nat.sub(n, horizon),
+             Nat.sub(n, R.nats_nth(R.csr_delays(c), i))) == True{} : Bool}
+
+# a < b implies a <= b (weakening the strict order to the weak one; the
+# CSR delays are strictly inside the horizon, and antitonicity consumes
+# the weak form).
+law le_of_lt:
+  for a: Nat
+  for b: Nat
+  for +h: {Nat.is_lt(a, b) == True{} : Bool}
+  {Nat.is_le(a, b) == True{} : Bool}

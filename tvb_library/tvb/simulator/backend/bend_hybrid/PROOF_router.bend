@@ -2329,3 +2329,96 @@ def Laws.row_lines_len(ls, c, t):
 # the positive instance: pure computation, definitional.
 def Laws.row_lines_good_1():
   {==}
+
+# --------------------------------------------------------------------------
+# 7a. the cap >= horizon closure: the capacity gate, the read-window bound
+# --------------------------------------------------------------------------
+
+# ok_cap_good / ok_cap_bad: pure computation, definitional
+def Laws.ok_cap_good():
+  {==}
+
+def Laws.ok_cap_bad():
+  {==}
+
+# ok_cap_le: ok_cap unfolds definitionally to the decider, so the
+# hypothesis IS the goal.
+def Laws.ok_cap_le(c, cap, h):
+  h
+
+# saturating sub is antitone unconditionally: sub_le_mono's induction with
+# the in-history witness dropped -- no case ever consumed it.
+def sub_antitone_go(+n: Nat, +a: Nat, +b: Nat,
+                    h: {Nat.is_le(a, b) == True{} : Bool})
+    -> {Nat.is_le(Nat.sub(n, b), Nat.sub(n, a)) == True{} : Bool}:
+  match n a b:
+    case 0n 0n _:
+      {==}
+    case 0n 1n+r _:
+      {==}
+    case 1n+p 0n 0n:
+      Laws.le_refl_b(Nat.sub(1n+p, 0n))
+    case 1n+p 0n 1n+q:
+      Laws.le_succ_of_le(Nat.sub(p, q), p, Laws.sub_le_b(p, q))
+    case 1n+p 1n+r 0n:
+      Bool.fne({Nat.is_le(Nat.sub(1n+p, 0n), Nat.sub(1n+p, 1n+r)) == True{} : Bool},
+               Bool.fne({Nat.is_le(1n+r, 0n) == True{} : Bool}, h))
+    case 1n+p 1n+r 1n+q:
+      sub_antitone_go(p, r, q, h)
+
+def Laws.sub_antitone(n, a, b, h):
+  sub_antitone_go(n, a, b, h)
+
+# a < b implies a <= b: the strict decider's True forces the weak one;
+# the (1+p, 0) case is absurd (nothing is below 0).
+def le_of_lt_go(a: Nat, b: Nat, h: {Nat.is_lt(a, b) == True{} : Bool})
+    -> {Nat.is_le(a, b) == True{} : Bool}:
+  match a b h:
+    case 0n b _:
+      le_zero(b)
+    case 1n+p 0n h:
+      Bool.fne({Nat.is_le(1n+p, 0n) == True{} : Bool}, h)
+    case 1n+p 1n+q h:
+      le_of_lt_go(p, q, h)
+
+def Laws.le_of_lt(a, b, h):
+  le_of_lt_go(a, b, h)
+
+# read_window_lo: the projection's window fits the horizon (proj_win_fits:
+# d + win <= horizon), and cancelling more leaves less-or-equal
+# (sub_antitone), so the window's oldest cell n - (d + win) is at or
+# behind n - horizon: the horizon is the worst-case read depth.
+def Laws.read_window_lo(n, nlanes, horizon, p, h):
+  sub_antitone_go(n, Nat.add(R.proj_d(p), R.proj_win(p)), horizon,
+                  proj_win_fits_go(nlanes, horizon, p, h))
+
+# csr_window_lo: peel the delays list and the index in lockstep.  In
+# bounds: csr_ok's nats_lt_all gives the delay strictly inside the
+# horizon, le_of_lt weakens it, sub_antitone orders the depths.  Past the
+# end: nats_nth answers 0n and n - 0 == n, which is at or behind n -
+# horizon (sub_le_self) -- the default read is the NEWEST sample, the
+# most conservative depth there is.
+def csr_window_lo_go(+n: Nat, +horizon: Nat, +ds: List<&2, Nat>, i: Nat,
+                     hall: {R.nats_lt_all(horizon, ds) == True{} : Bool})
+    -> {Nat.is_le(Nat.sub(n, horizon),
+                  Nat.sub(n, R.nats_nth(ds, i))) == True{} : Bool}:
+  match ds i:
+    case Nil{} _:
+      %Equal.sym(Nat, Nat.sub(n, 0n), n, Laws.sub_zero_r(n))
+        : {Nat.is_le(Nat.sub(n, horizon), _) == True{} : Bool}
+      Laws.sub_le_self(n, horizon)
+    case +d <> t 0n:
+      sub_antitone_go(n, d, horizon,
+                      le_of_lt_go(d, horizon,
+                                  and_elim_l_go(Nat.is_lt(d, horizon),
+                                                R.nats_lt_all(horizon, t),
+                                                hall)))
+    case d <> t 1n+q:
+      csr_window_lo_go(n, horizon, t, q,
+                       and_elim_r_go(Nat.is_lt(d, horizon),
+                                     R.nats_lt_all(horizon, t),
+                                     hall))
+
+def Laws.csr_window_lo(n, nsrc, horizon, c, i, h):
+  csr_window_lo_go(n, horizon, R.csr_delays(c), i,
+                   csr_ok_delays_go(nsrc, horizon, c, h))

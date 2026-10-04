@@ -853,6 +853,73 @@ def check_row_lines(limit: int = 6) -> int:
         bad += 1
     return bad
 
+def ok_cap_py(horizon: int, cap: int) -> bool:
+    """router.bend ok_cap: the capacity gate, horizon <= cap."""
+    return horizon <= cap
+
+
+def check_cap(limit: int = 8) -> int:
+    """The cap >= horizon closure, engine-side.
+
+    ok_cap: the gate accepts exactly horizon <= cap (positive GOOD instance
+      at cap = horizon; negative instance rejected).
+    sub_antitone: a <= b implies n-b <= n-a, saturation included.
+    read_window_lo: for every proj_shape_ok projection, the read window's
+      oldest cell n-(d+win) lies at or behind n-horizon -- the horizon is
+      the worst-case read depth.
+    csr_window_lo: every csr_ok per-edge delay read is inside the same
+      window (in-bounds delays strictly inside the horizon; past-the-end
+      nats_nth answers 0, the newest, most conservative depth).
+    """
+    bad = 0
+    # ok_cap, positive and negative instances
+    if not ok_cap_py(4, 4):
+        print("FAIL ok_cap_good: horizon 4 must fit cap 4")
+        bad += 1
+    if ok_cap_py(4, 3):
+        print("FAIL ok_cap_bad: horizon 4 must NOT fit cap 3")
+        bad += 1
+    # sub_antitone
+    for n in range(limit):
+        for a in range(limit):
+            for b in range(limit):
+                if a <= b and not (sub(n, b) <= sub(n, a)):
+                    print(f"FAIL sub_antitone n={n} a={a} b={b}")
+                    bad += 1
+    # read_window_lo: exhaustive over small shapes
+    for horizon in range(1, limit):
+        for d in range(limit):
+            for win in range(limit):
+                p = (0, 0, d, win, 0)
+                if proj_shape_ok_py(2, horizon, p):
+                    for n in range(limit):
+                        if not (sub(n, horizon)
+                                <= sub(n, d + win)):
+                            print(f"FAIL read_window_lo n={n} h={horizon} "
+                                  f"d={d} win={win}")
+                            bad += 1
+    # csr_window_lo: exhaustive over small CSR delay lists
+    for horizon in range(1, limit):
+        for ds in ([], [0], [1], [0, 2], [3, 1], [horizon - 1], [horizon]):
+            if all(d < horizon for d in ds):
+                for n in range(limit):
+                    for i in range(len(ds) + 2):
+                        d = ds[i] if i < len(ds) else 0
+                        if not (sub(n, horizon) <= sub(n, d)):
+                            print(f"FAIL csr_window_lo n={n} h={horizon} "
+                                  f"ds={ds} i={i}")
+                            bad += 1
+    # negative control, engine-side: the under-capacity ring really aliases
+    # -- an in-window read (i = 4 inside [n-4, n] at n = 4) wraps to a live
+    # slot and answers the WRONG sample, which is why ok_cap rejects it
+    xs = [1.5, 2.5, 3.5]
+    if ring_read_py(xs, 4, 3, 0.0) == hist_read_py(xs, 4, 0.0):
+        print("FAIL bad_cap probe: cap < horizon aliasing must break "
+              "the correspondence")
+        bad += 1
+    return bad
+
+
 def main() -> int:
     bad = 0
     bad += check_window_span()
@@ -875,6 +942,7 @@ def main() -> int:
     bad += check_blend_wiring()
     bad += check_csr_slice()
     bad += check_row_lines()
+    bad += check_cap()
     if bad:
         print(f"{bad} FAILURES")
         return 1
@@ -890,7 +958,9 @@ def main() -> int:
           "+ the blend wiring (blend_adjacent / clamp_reads_same / "
           "clamp_zero_frac) "
           "+ the CSR slice (take_nth / slice_nth / slice_len / csr rows) "
-          "+ the capstone (row_lines_nth / row_lines_len): "
+          "+ the capstone (row_lines_nth / row_lines_len) "
+          "+ the cap >= horizon closure (ok_cap / sub_antitone / "
+          "read_window_lo / csr_window_lo): "
           "all properties hold (exhaustive small range, engine-side)")
     return 0
 
