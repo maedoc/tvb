@@ -1428,3 +1428,47 @@ law csr_row_good_1:
 law csr_row_delays_good_1:
   {R.csr_row_delays(R.Csr{0n <> 2n <> 3n <> Nil{}, 0n <> 1n <> 1n <> Nil{}, 0n <> 1n <> 2n <> Nil{}}, 1n)
     == 2n <> Nil{} : List<&2, Nat>}
+
+# --------------------------------------------------------------------------
+# 6e. the end-to-end capstone (Link 4): the routing table of target t's
+#     row IS the configured edges, src and delay aligned
+# --------------------------------------------------------------------------
+# row_lines_nth: the j-th line of target t's routing table is the routed
+# read of source indices[lo + j] at delay delays[lo + j], where
+# lo = indptr[t].  The witness lt_ok(j, hi - lo) is the row width --
+# past it the table saturates (Nil) while the config still has rows
+# (bad_row_lines).  This is the composition of the whole ladder:
+# csr_ok bounds the flat reads, slice_nth-style addressing picks the
+# (src, delay) pair, and route_read (blend_adjacent, clamp laws) makes
+# the line.
+law row_lines_nth:
+  for +ls: List<&2, R.Lane>
+  for +c: R.Csr
+  for +t: Nat
+  for j: Nat
+  for h: R.lt_ok(j, Nat.sub(R.csr_row_hi(c, t), R.csr_row_lo(c, t)))
+  {R.nth_line(R.csr_row_lines(ls, c, t), j)
+    == R.edge(ls,
+        R.nats_nth(R.csr_indices(c), Nat.add(R.csr_row_lo(c, t), j)),
+        R.nats_nth(R.csr_delays(c), Nat.add(R.csr_row_lo(c, t), j)))
+    : R.Line}
+
+# row_lines_len: the routing table has exactly the row's width -- the
+# gather folds exactly indptr[t+1] - indptr[t] edges, no more.
+law row_lines_len:
+  for +ls: List<&2, R.Lane>
+  for +c: R.Csr
+  for +t: Nat
+  {R.lines_len(R.csr_row_lines(ls, c, t))
+    == Nat.sub(R.csr_row_hi(c, t), R.csr_row_lo(c, t)) : Nat}
+
+# the positive instance, pinned: GOOD_CSR's row 1 is the single edge
+# (src 1, delay 2) read from a 2-lane config -- the exact table the
+# gather folds for target 1.
+law row_lines_good_1:
+  {R.csr_row_lines(R.lane_init(1n) <> R.lane_init(2n) <> Nil{},
+                   R.Csr{0n <> 2n <> 3n <> Nil{}, 0n <> 1n <> 1n <> Nil{},
+                         0n <> 1n <> 2n <> Nil{}},
+                   1n)
+    == R.edge(R.lane_init(1n) <> R.lane_init(2n) <> Nil{}, 1n, 2n) <> Nil{}
+    : List<&2, R.Line>}

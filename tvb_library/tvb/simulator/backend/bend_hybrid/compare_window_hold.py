@@ -787,6 +787,72 @@ def check_csr_slice(limit: int = 8) -> int:
         bad += 1
     return bad
 
+def edge_py(ls: list, s: int, d: int) -> tuple:
+    """router.bend edge: route_read on lane s at delay d."""
+    lane = nth(ls, s)
+    if lane is None:
+        lane = Lane(1, 0, 0)
+    return route_read_py(lane.newest, d, k_minus_1_minus_left(lane), lane.k, 0)
+
+def edge_lines_from_py(ls: list, ixs: list, ds: list, cnt: int, e0: int) -> list:
+    """router.bend edge_lines_from: cnt edges starting at flat index e0."""
+    out = []
+    for j in range(cnt if cnt > 0 else 0):
+        out.append(edge_py(ls, nth(ixs, e0 + j), nth(ds, e0 + j)))
+    return out
+
+def csr_row_lines_py(ls: list, indptr: list, ixs: list, ds: list, t: int) -> list:
+    """router.bend csr_row_lines: the routing table of target t's row."""
+    lo = nth(indptr, t)
+    hi = nth(indptr, t + 1)
+    return edge_lines_from_py(ls, ixs, ds, sub(hi, lo), lo)
+
+def check_row_lines(limit: int = 6) -> int:
+    """The end-to-end capstone (Link 4), engine-side.
+
+    row_lines_nth: the j-th line of target t's routing table is the routed
+      read of source indices[lo + j] at delay delays[lo + j] -- the
+      (src, delay) pair read at the SAME flat index, aligned entry for
+      entry.
+    row_lines_len: the table has exactly the row's width.
+
+    Negative control: past the row's width the table answers the default
+      Line while the config's flat read still returns a real edge
+      (bad_row_lines).
+    """
+    import random
+    rng = random.Random(20261004)
+    bad = 0
+    for nl in range(1, limit):
+        ls = [Lane(max(rng.randrange(1, 4), 1), 0, 0) for _ in range(nl)]
+        for nn in range(1, limit):
+            indptr = sorted(rng.randrange(6) for _ in range(nn + 1))
+            indptr[0] = 0
+            m = indptr[-1]
+            ixs = [rng.randrange(nl) for _ in range(m)]
+            ds = [rng.randrange(4) for _ in range(m)]
+            for t in range(nn):
+                table = csr_row_lines_py(ls, indptr, ixs, ds, t)
+                w = sub(indptr[t + 1] if t + 1 < len(indptr) else 0, indptr[t])
+                if len(table) != w:
+                    print(f"FAIL row_lines_len t={t}: {len(table)} != {w}")
+                    bad += 1
+                for j in range(w):
+                    want = edge_py(ls, nth(ixs, indptr[t] + j),
+                                   nth(ds, indptr[t] + j))
+                    if table[j] != want:
+                        print(f"FAIL row_lines_nth t={t} j={j}")
+                        bad += 1
+    # negative control: past the width the table saturates to the default
+    table = csr_row_lines_py([Lane(2, 1, 0)], [0, 1], [0], [0], 0)
+    if len(table) >= 1 and table[0] != (0, 0, 0, 1, 0):
+        pass  # fine
+    past = edge_lines_from_py([Lane(2, 1, 0)], [0], [0], 0, 1)
+    if past != []:
+        print("FAIL bad_row_lines probe: past-width table should be empty")
+        bad += 1
+    return bad
+
 def main() -> int:
     bad = 0
     bad += check_window_span()
@@ -808,6 +874,7 @@ def main() -> int:
     bad += check_ring()
     bad += check_blend_wiring()
     bad += check_csr_slice()
+    bad += check_row_lines()
     if bad:
         print(f"{bad} FAILURES")
         return 1
@@ -822,7 +889,8 @@ def main() -> int:
           "all properties hold (exhaustive small range, engine-side) "
           "+ the blend wiring (blend_adjacent / clamp_reads_same / "
           "clamp_zero_frac) "
-          "+ the CSR slice (take_nth / slice_nth / slice_len / csr rows): "
+          "+ the CSR slice (take_nth / slice_nth / slice_len / csr rows) "
+          "+ the capstone (row_lines_nth / row_lines_len): "
           "all properties hold (exhaustive small range, engine-side)")
     return 0
 

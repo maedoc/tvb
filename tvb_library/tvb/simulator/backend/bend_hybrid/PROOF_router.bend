@@ -2192,3 +2192,140 @@ def Laws.csr_row_good_1():
 
 def Laws.csr_row_delays_good_1():
   {==}
+
+# --------------------------------------------------------------------------
+# 6e. the end-to-end capstone (Link 4)
+# --------------------------------------------------------------------------
+# row_lines_nth: induction on the row width, peeling one edge per step.
+# The table is edge_lines_from(ls, ixs, ds, w, lo) with w = hi - lo:
+# at j = 0 the head IS the edge at flat index lo (definitional -- both
+# sides read nth(ixs, lo), nth(ds, lo)); at j = 1+p the tail continues
+# from flat index lo + 1 with width q, and the flat reads regroup
+# lo + (1 + p) == (1 + lo) + p via add_assoc/add_comm -- the same move
+# as the staleness bound's countdown induction.
+def row_lines_nth_go(+ls: List<&2, R.Lane>, +c: R.Csr, +t: Nat,
+                     w: Nat, +lo: Nat, +j: Nat,
+                     h: R.lt_ok(j, w))
+  -> {R.nth_line(R.edge_lines_from(ls, R.csr_indices(c), R.csr_delays(c), w, lo), j)
+    == R.edge(ls,
+        R.nats_nth(R.csr_indices(c), Nat.add(lo, j)),
+        R.nats_nth(R.csr_delays(c), Nat.add(lo, j)))
+    : R.Line}:
+  match w:
+    case 0n:
+      match j:
+        case 0n:
+          Empty.absurd({R.nth_line(R.edge_lines_from(ls, R.csr_indices(c), R.csr_delays(c), 0n, lo), 0n)
+            == R.edge(ls, R.nats_nth(R.csr_indices(c), Nat.add(lo, 0n)),
+                      R.nats_nth(R.csr_delays(c), Nat.add(lo, 0n))) : R.Line},
+            mod_lt_zero_absurd(0n, h))
+        case 1n+p:
+          Empty.absurd({R.nth_line(R.edge_lines_from(ls, R.csr_indices(c), R.csr_delays(c), 0n, lo), 1n+p)
+            == R.edge(ls, R.nats_nth(R.csr_indices(c), Nat.add(lo, 1n+p)),
+                      R.nats_nth(R.csr_delays(c), Nat.add(lo, 1n+p))) : R.Line},
+            mod_lt_zero_absurd(1n+p, h))
+    case 1n+q:
+      match j h:
+        case 0n _:
+          Equal.sym(R.Line,
+            R.edge(ls,
+              R.nats_nth(R.csr_indices(c), Nat.add(lo, 0n)),
+              R.nats_nth(R.csr_delays(c), Nat.add(lo, 0n))),
+            R.edge(ls,
+              R.nats_nth(R.csr_indices(c), lo),
+              R.nats_nth(R.csr_delays(c), lo)),
+            Equal.trans(R.Line,
+              R.edge(ls,
+                R.nats_nth(R.csr_indices(c), Nat.add(lo, 0n)),
+                R.nats_nth(R.csr_delays(c), Nat.add(lo, 0n))),
+              R.edge(ls,
+                R.nats_nth(R.csr_indices(c), lo),
+                R.nats_nth(R.csr_delays(c), Nat.add(lo, 0n))),
+              R.edge(ls,
+                R.nats_nth(R.csr_indices(c), lo),
+                R.nats_nth(R.csr_delays(c), lo)),
+              Equal.cong(Nat, R.Line,
+                z => R.edge(ls, R.nats_nth(R.csr_indices(c), z),
+                            R.nats_nth(R.csr_delays(c), Nat.add(lo, 0n))),
+                Nat.add(lo, 0n), lo,
+                Laws.add_zero(lo)),
+              Equal.cong(Nat, R.Line,
+                z => R.edge(ls, R.nats_nth(R.csr_indices(c), lo),
+                            R.nats_nth(R.csr_delays(c), z)),
+                Nat.add(lo, 0n), lo,
+                Laws.add_zero(lo))))
+        case 1n+p hlt:
+          Equal.trans(R.Line,
+            R.nth_line(R.edge_lines_from(ls, R.csr_indices(c), R.csr_delays(c), q, Nat.add(lo, 1n)), p),
+            R.edge(ls,
+              R.nats_nth(R.csr_indices(c), Nat.add(Nat.add(lo, 1n), p)),
+              R.nats_nth(R.csr_delays(c), Nat.add(Nat.add(lo, 1n), p))),
+            R.edge(ls,
+              R.nats_nth(R.csr_indices(c), Nat.add(lo, 1n+p)),
+              R.nats_nth(R.csr_delays(c), Nat.add(lo, 1n+p))),
+            row_lines_nth_go(ls, c, t, q, Nat.add(lo, 1n), p, hlt),
+            Equal.sym(R.Line,
+              R.edge(ls,
+                R.nats_nth(R.csr_indices(c), Nat.add(lo, 1n+p)),
+                R.nats_nth(R.csr_delays(c), Nat.add(lo, 1n+p))),
+              R.edge(ls,
+                R.nats_nth(R.csr_indices(c), Nat.add(Nat.add(lo, 1n), p)),
+                R.nats_nth(R.csr_delays(c), Nat.add(Nat.add(lo, 1n), p))),
+              Equal.trans(R.Line,
+                R.edge(ls,
+                  R.nats_nth(R.csr_indices(c), Nat.add(lo, 1n+p)),
+                  R.nats_nth(R.csr_delays(c), Nat.add(lo, 1n+p))),
+                R.edge(ls,
+                  R.nats_nth(R.csr_indices(c), Nat.add(Nat.add(lo, 1n), p)),
+                  R.nats_nth(R.csr_delays(c), Nat.add(lo, 1n+p))),
+                R.edge(ls,
+                  R.nats_nth(R.csr_indices(c), Nat.add(Nat.add(lo, 1n), p)),
+                  R.nats_nth(R.csr_delays(c), Nat.add(Nat.add(lo, 1n), p))),
+                Equal.cong(Nat, R.Line,
+                  z => R.edge(ls, R.nats_nth(R.csr_indices(c), z),
+                              R.nats_nth(R.csr_delays(c), Nat.add(lo, 1n+p))),
+                  Nat.add(lo, 1n+p), Nat.add(Nat.add(lo, 1n), p),
+                  Equal.sym(Nat, Nat.add(Nat.add(lo, 1n), p), Nat.add(lo, 1n+p),
+                    Laws.add_assoc(lo, 1n, p))),
+                Equal.cong(Nat, R.Line,
+                  z => R.edge(ls, R.nats_nth(R.csr_indices(c), Nat.add(Nat.add(lo, 1n), p)),
+                              R.nats_nth(R.csr_delays(c), z)),
+                  Nat.add(lo, 1n+p), Nat.add(Nat.add(lo, 1n), p),
+                  Equal.sym(Nat, Nat.add(Nat.add(lo, 1n), p), Nat.add(lo, 1n+p),
+                    Laws.add_assoc(lo, 1n, p))))))
+
+# w = 0 is absurd at j a successor: lt_ok(1+p, 0n) is Empty.
+def row_lines_zero_absurd(p: Nat, h: R.lt_ok(1n+p, 0n)) -> Empty:
+  match p h:
+    case 0n h:
+      h
+    case 1n+q h:
+      h
+
+def Laws.row_lines_nth(ls, c, t, j, h):
+  row_lines_nth_go(ls, c, t, Nat.sub(R.csr_row_hi(c, t), R.csr_row_lo(c, t)),
+                   R.csr_row_lo(c, t), j, h)
+
+# row_lines_len: the table has exactly the row's width -- each step of
+# edge_lines_from conses one line and shrinks the countdown, so the
+# lengths reduce in lockstep.  Induction on the width.
+def row_lines_len_go(+ls: List<&2, R.Lane>, +c: R.Csr, w: Nat, +lo: Nat)
+  -> {R.lines_len(R.edge_lines_from(ls, R.csr_indices(c), R.csr_delays(c), w, lo))
+    == w : Nat}:
+  match w:
+    case 0n:
+      {==}
+    case 1n+q:
+      Equal.cong(Nat, Nat, z => Nat.add(1n, z),
+        R.lines_len(R.edge_lines_from(ls, R.csr_indices(c), R.csr_delays(c), q,
+                                      Nat.add(lo, 1n))),
+        q,
+        row_lines_len_go(ls, c, q, Nat.add(lo, 1n)))
+
+def Laws.row_lines_len(ls, c, t):
+  row_lines_len_go(ls, c, Nat.sub(R.csr_row_hi(c, t), R.csr_row_lo(c, t)),
+                   R.csr_row_lo(c, t))
+
+# the positive instance: pure computation, definitional.
+def Laws.row_lines_good_1():
+  {==}

@@ -111,7 +111,11 @@ relative-tolerance comparison meaningful.
   proved router produced for that edge.
 - Link 3: CSR slice -- the edge list folded by `gather` for target `t` is
   exactly the config's rows between `indptr[t]` and `indptr[t+1]`.
-- Link 4 (capstone): for every config passing `ok` + `csr_ok`, at every tick,
-  the coupling input of every target is the CSR-ordered fold of
-  `w * blend(...)` over exactly the configured (src, delay, weight) triples.
-  Structure and provenance, machine-checked; values, differential-tested.
+- Link 4 (capstone): DONE at the routing-table level -- `row_lines_nth` +
+  `row_lines_len` (PROOF_router.bend 6e) prove target t's table IS the configured
+  edges, (src, delay) aligned at the same flat index.  The float side (the fold
+  of `w * blend(...)` itself) stays with the differential harness, as designed:
+  for every config passing `ok` + `csr_ok`, at every tick, the coupling input
+  of every target is the CSR-ordered fold of `w * blend(...)` over exactly the
+  configured (src, delay, weight) triples -- structure and provenance
+  machine-checked; values, differential-tested.

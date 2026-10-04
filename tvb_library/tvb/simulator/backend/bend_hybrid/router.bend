@@ -558,6 +558,37 @@ def csr_row_indices(+c: Csr, +t: Nat) -> List<&2, Nat>:
 # the node t's row of the delays array: same bounds, same slice
 def csr_row_delays(+c: Csr, +t: Nat) -> List<&2, Nat>:
   nats_slice(csr_delays(c), csr_row_lo(c, t), csr_row_hi(c, t))
+# THE CAPSTONE COMPOSITION (Link 4): the routing table of target t's row.
+# The engine's per-target gather folds w * blend(...) over the edges of
+# the config's CSR row t; these defs are that row's LINES -- the routed
+# read each edge consumes -- built in lockstep over the flat arrays so
+# the (src, delay) pair can never desynchronize.
+#
+# An edge's routed line: read source lane s (indices[e]) at delay
+# delays[e].  No Proj is fabricated -- the projection IS (src, d).
+def edge(+ls: List<&2, Lane>, +s: Nat, +d: Nat) -> Line:
+  route_read(lane_newest(nth_lane(ls, s)), d,
+             lane_num(nth_lane(ls, s)), lane_k(nth_lane(ls, s)), 0n)
+
+# the lines of cnt edges starting at flat index e0, in config order
+# (the row's bounds under csr_ok; the pair (src, delay) is read at the
+# SAME flat index, so it cannot desynchronize)
+def edge_lines_from(+ls: List<&2, Lane>, +ixs: List<&2, Nat>,
+                    +ds: List<&2, Nat>, +cnt: Nat, +e0: Nat)
+  -> List<&2, Line>:
+  match cnt:
+    case 0n:
+      Nil{}
+    case 1n+q:
+      edge(ls, nats_nth(ixs, e0), nats_nth(ds, e0))
+        <> edge_lines_from(ls, ixs, ds, q, Nat.add(e0, 1n))
+
+# the routing table of target t's row: the lines of exactly the
+# indptr[t] .. indptr[t+1] edges, in config order
+def csr_row_lines(+ls: List<&2, Lane>, +c: Csr, +t: Nat) -> List<&2, Line>:
+  edge_lines_from(ls, csr_indices(c), csr_delays(c),
+                  Nat.sub(csr_row_hi(c, t), csr_row_lo(c, t)), csr_row_lo(c, t))
+
 
 
 # a lane is DUE (integrates and publishes this tick) iff its countdown
