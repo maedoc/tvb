@@ -514,6 +514,52 @@ def csr_ok(+nsrc: Nat, +horizon: Nat, +c: Csr) -> Bool:
   Bool.and(nats_lt_all(nsrc, csr_indices(c)),
            nats_lt_all(horizon, csr_delays(c)))))))
 
+# nats_take: the first k elements of a Nat list (drop's mirror; k past
+# the end yields the whole list -- the same saturating convention as
+# hist_drop and nats_nth's default-past-end, so slices never fabricate
+# elements).  With nats_drop this gives the CSR row slice.
+def nats_take(xs: List<&2, Nat>, k: Nat) -> List<&2, Nat>:
+  match xs k:
+    case Nil{} _:
+      Nil{}
+    case h <> t 0n:
+      Nil{}
+    case h <> t 1n+q:
+      h <> nats_take(t, q)
+
+# nats_drop: the list past the first k elements, saturating like hist_drop
+def nats_drop(xs: List<&2, Nat>, k: Nat) -> List<&2, Nat>:
+  match xs k:
+    case Nil{} _:
+      Nil{}
+    case h <> t 0n:
+      xs
+    case h <> t 1n+q:
+      nats_drop(t, q)
+
+# the CSR row slice: the elements of xs at indices [lo, hi) -- exactly
+# the config's rows between indptr[t] and indptr[t+1] when xs is the
+# edge array and (lo, hi) the row's bounds.
+def nats_slice(xs: List<&2, Nat>, +lo: Nat, +hi: Nat) -> List<&2, Nat>:
+  nats_take(nats_drop(xs, lo), Nat.sub(hi, lo))
+
+# the row bounds of node t: (indptr[t], indptr[t+1]) with the same
+# default-past-end convention as nats_nth (out-of-range indptr reads 0)
+def csr_row_lo(+c: Csr, +t: Nat) -> Nat:
+  nats_nth(csr_indptr(c), t)
+
+def csr_row_hi(+c: Csr, +t: Nat) -> Nat:
+  nats_nth(csr_indptr(c), Nat.add(t, 1n))
+
+# the node t's row of the indices array: sources indptr[t]..indptr[t+1]
+def csr_row_indices(+c: Csr, +t: Nat) -> List<&2, Nat>:
+  nats_slice(csr_indices(c), csr_row_lo(c, t), csr_row_hi(c, t))
+
+# the node t's row of the delays array: same bounds, same slice
+def csr_row_delays(+c: Csr, +t: Nat) -> List<&2, Nat>:
+  nats_slice(csr_delays(c), csr_row_lo(c, t), csr_row_hi(c, t))
+
+
 # a lane is DUE (integrates and publishes this tick) iff its countdown
 # has reached zero.  The kernel's `if t % k == 0` gate, carried.
 def lane_due(+l: Lane) -> Bool:

@@ -2073,3 +2073,122 @@ def Laws.clamp_reads_same(tape, n, num, den, win, ic):
 # alpha = 0.0 and the blend adds zero times the (bogus) delta.
 def Laws.clamp_zero_frac(n, num, den, win):
   {==}
+
+# --------------------------------------------------------------------------
+# 6d. the CSR slice laws (Link 3)
+# --------------------------------------------------------------------------
+# take_nth: induction on the witness lt_ok(i, k), peeling one level of
+# both i and k per step.  Base: k = 0 is absurd (i < 0).  Step: take
+# keeps the head, so i = 0 is definitional; i = 1+p recurses into the
+# tail with witness lt_ok(p, q).
+def take_nth_go(+xs: List<&2, Nat>, k: Nat, i: Nat,
+  h: R.lt_ok(i, k))
+  -> {R.nats_nth(R.nats_take(xs, k), i) == R.nats_nth(xs, i) : Nat}:
+  match xs k i h:
+    case Nil{} _ _ _:
+      {==}
+    case _ 0n _ h:
+      Empty.absurd({R.nats_nth(R.nats_take(xs, 0n), i) == R.nats_nth(xs, i) : Nat},
+                   mod_lt_zero_absurd(i, h))
+    case _ 1n+q 0n _:
+      {==}
+    case h <> t 1n+q 1n+p hlt:
+      take_nth_go(t, q, p, hlt)
+
+def Laws.take_nth(xs, k, i, h):
+  take_nth_go(xs, k, i, h)
+
+# drop_nth: the drop's mirror -- reading drop(xs, lo) at i (i < len - lo
+# not needed; nth's default-past-end makes it unconditional) is reading
+# xs at lo + i.  This is the composition step of slice_nth: the slice is
+# take(drop(xs, lo), hi - lo).
+def drop_nth_go(+xs: List<&2, Nat>, lo: Nat, i: Nat)
+  -> {R.nats_nth(R.nats_drop(xs, lo), i) == R.nats_nth(xs, Nat.add(lo, i)) : Nat}:
+  match xs lo:
+    case Nil{} _:
+      {==}
+    case h <> t 0n:
+      {==}
+    case h <> t 1n+q:
+      drop_nth_go(t, q, i)
+
+def drop_nth(xs: List<&2, Nat>, lo: Nat, i: Nat)
+  -> {R.nats_nth(R.nats_drop(xs, lo), i) == R.nats_nth(xs, Nat.add(lo, i)) : Nat}:
+  drop_nth_go(xs, lo, i)
+
+# slice_nth: composition -- the slice read at i is take(drop(xs, lo), w)
+# read at i, which is drop(xs, lo) at i (take_nth, witness lt_ok(i, w)),
+# which is xs at lo + i (drop_nth).  The regrouping lo + (lo' + i) is
+# NOT needed: drop_nth's lo is exactly the slice's lo.
+def slice_nth_go(+xs: List<&2, Nat>, +lo: Nat, +hi: Nat, +i: Nat,
+  h: R.lt_ok(i, Nat.sub(hi, lo)))
+  -> {R.nats_nth(R.nats_slice(xs, lo, hi), i)
+    == R.nats_nth(xs, Nat.add(lo, i)) : Nat}:
+  Equal.trans(Nat,
+    R.nats_nth(R.nats_slice(xs, lo, hi), i),
+    R.nats_nth(R.nats_drop(xs, lo), i),
+    R.nats_nth(xs, Nat.add(lo, i)),
+    Laws.take_nth(R.nats_drop(xs, lo), Nat.sub(hi, lo), i, h),
+    drop_nth(xs, lo, i))
+
+def Laws.slice_nth(xs, lo, hi, i, h):
+  slice_nth_go(xs, lo, hi, i, h)
+
+# take_len: take never grows the list past k -- the length bound of the
+# fold's input.  Structural induction on the list; the k = 0 case is
+# definitional (Nil), and a Nil tail makes len 0 <= anything.
+def take_len_go(+xs: List<&2, Nat>, k: Nat)
+  -> {Nat.is_le(R.nats_len(R.nats_take(xs, k)), k) == True{} : Bool}:
+  match xs k:
+    case Nil{} _:
+      le_zero(k)
+    case _ 0n:
+      {==}
+    case h <> t 1n+q:
+      take_len_go(t, q)
+
+def take_len(xs: List<&2, Nat>, k: Nat)
+  -> {Nat.is_le(R.nats_len(R.nats_take(xs, k)), k) == True{} : Bool}:
+  take_len_go(xs, k)
+
+# drop_len: dropping shrinks or keeps the length -- the other half of
+# the slice's length bound.
+def drop_len_nil_go(k: Nat)
+  -> {Nat.is_le(R.nats_len(R.nats_drop(Nil{}, k)), 0n) == True{} : Bool}:
+  {==}
+
+def drop_len_go(+xs: List<&2, Nat>, +k: Nat)
+  -> {Nat.is_le(R.nats_len(R.nats_drop(xs, k)), R.nats_len(xs)) == True{} : Bool}:
+  match xs k:
+    case Nil{} _:
+      drop_len_nil_go(k)
+    case _ 0n:
+      Laws.le_refl_b(R.nats_len(xs))
+    case h <> t 1n+q:
+      Laws.le_succ_of_le(R.nats_len(R.nats_drop(t, q)), R.nats_len(t),
+        drop_len_go(t, q))
+
+def drop_len(xs: List<&2, Nat>, k: Nat)
+  -> {Nat.is_le(R.nats_len(R.nats_drop(xs, k)), R.nats_len(xs)) == True{} : Bool}:
+  drop_len_go(xs, k)
+
+# slice_len: transitivity -- the slice is take(drop(xs, lo), hi - lo),
+# its length is <= hi - lo by take_len directly (the drop underneath
+# only shrinks the input, which take_len is independent of).
+def slice_len_go(+xs: List<&2, Nat>, +lo: Nat, +hi: Nat)
+  -> {Nat.is_le(R.nats_len(R.nats_slice(xs, lo, hi)), Nat.sub(hi, lo))
+    == True{} : Bool}:
+  take_len(R.nats_drop(xs, lo), Nat.sub(hi, lo))
+
+def Laws.slice_len(xs, lo, hi):
+  slice_len_go(xs, lo, hi)
+
+# the positive instances: pure computation, definitional.
+def Laws.csr_row_good_0():
+  {==}
+
+def Laws.csr_row_good_1():
+  {==}
+
+def Laws.csr_row_delays_good_1():
+  {==}

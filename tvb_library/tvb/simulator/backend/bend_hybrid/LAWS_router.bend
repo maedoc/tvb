@@ -1373,3 +1373,58 @@ law clamp_zero_frac:
   for +den: Nat
   for +win: Nat
   {R.l_num(R.route_read(n, 0n, num, den, win)) == 0n : Nat}
+
+# --------------------------------------------------------------------------
+# 6d. the CSR slice laws (Link 3): the edge list folded by gather for
+#     target t is exactly the config's rows between indptr[t] and
+#     indptr[t+1]
+# --------------------------------------------------------------------------
+# take_nth: a bounded take is transparent to nth -- reading take(xs, k)
+# at i < k is reading xs at i.  The row slice's first half.
+law take_nth:
+  for +xs: List<&2, Nat>
+  for k: Nat
+  for i: Nat
+  for h: R.lt_ok(i, k)
+  {R.nats_nth(R.nats_take(xs, k), i) == R.nats_nth(xs, i) : Nat}
+
+# slice_nth: the HEART of Link 3 -- the i-th edge of target t's slice is
+# the config's (lo+i)-th row, i.e. nats_nth(indices, indptr[t] + i).
+# The witness lt_ok(i, hi - lo) is load-bearing: past the row's width
+# the slice saturates to 0 while the flat read still returns a real row
+# (bad_slice).
+law slice_nth:
+  for +xs: List<&2, Nat>
+  for lo: Nat
+  for hi: Nat
+  for i: Nat
+  for h: R.lt_ok(i, Nat.sub(hi, lo))
+  {R.nats_nth(R.nats_slice(xs, lo, hi), i)
+    == R.nats_nth(xs, Nat.add(lo, i)) : Nat}
+
+# slice_len: the fold's length is bounded by the row's width -- the
+# gather never sees MORE edges than the config declares for the row.
+law slice_len:
+  for +xs: List<&2, Nat>
+  for lo: Nat
+  for hi: Nat
+  {Nat.is_le(R.nats_len(R.nats_slice(xs, lo, hi)), Nat.sub(hi, lo))
+    == True{} : Bool}
+
+# the canonical instance, positive and pinned (the csr_ok_good lesson:
+# instance laws are load-bearing -- they pin the INTENDED reading).
+# GOOD_CSR's row 0 is indices[0..2) = [0, 1], row 1 is indices[2..3) = [1].
+law csr_row_good_0:
+  {R.csr_row_indices(R.Csr{0n <> 2n <> 3n <> Nil{}, 0n <> 1n <> 1n <> Nil{}, 0n <> 1n <> 2n <> Nil{}}, 0n)
+    == 0n <> 1n <> Nil{} : List<&2, Nat>}
+
+law csr_row_good_1:
+  {R.csr_row_indices(R.Csr{0n <> 2n <> 3n <> Nil{}, 0n <> 1n <> 1n <> Nil{}, 0n <> 1n <> 2n <> Nil{}}, 1n)
+    == 1n <> Nil{} : List<&2, Nat>}
+
+# the delays row slices the SAME bounds: the i-th delay of target t's row
+# is the config's (indptr[t] + i)-th delay -- the (src, delay) PAIR a
+# gather folds stays aligned, entry for entry.
+law csr_row_delays_good_1:
+  {R.csr_row_delays(R.Csr{0n <> 2n <> 3n <> Nil{}, 0n <> 1n <> 1n <> Nil{}, 0n <> 1n <> 2n <> Nil{}}, 1n)
+    == 2n <> Nil{} : List<&2, Nat>}

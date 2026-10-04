@@ -708,6 +708,85 @@ def check_blend_wiring(limit: int = 8) -> int:
         bad += 1
     return bad
 
+def nats_take_py(xs: list, k: int) -> list:
+    """router.bend nats_take: first k elements, saturating."""
+    return xs[:k] if k < len(xs) else list(xs)
+
+def nats_drop_py(xs: list, k: int) -> list:
+    """router.bend nats_drop: past the first k, saturating."""
+    return xs[k:] if k < len(xs) else []
+
+def nats_slice_py(xs: list, lo: int, hi: int) -> list:
+    """router.bend nats_slice = take(drop(xs, lo), hi - lo)."""
+    return nats_take_py(nats_drop_py(xs, lo), sub(hi, lo))
+
+def csr_row_py(indptr: list, indices: list, t: int) -> list:
+    """router.bend csr_row_indices: rows between indptr[t] and indptr[t+1]."""
+    lo = nth(indptr, t)
+    hi = nth(indptr, t + 1)
+    return nats_slice_py(indices, lo, hi)
+
+def check_csr_slice(limit: int = 8) -> int:
+    """The CSR slice laws, engine-side.
+
+    take_nth: reading take(xs, k) at i < k is reading xs at i.
+    slice_nth: the i-th element of the [lo, hi) slice is xs[lo + i],
+      whenever i < hi - lo (the row-width witness).
+    slice_len: the slice never has more than hi - lo elements.
+    csr_row: the row of target t is exactly indices[indptr[t]:indptr[t+1]],
+      and the delays row slices the SAME bounds -- the (src, delay) pair
+      a gather folds stays aligned entry for entry.
+
+    Negative control: past the row's width the slice saturates to 0
+      while the flat read still returns a real row (bad_slice).
+    """
+    import random
+    rng = random.Random(20261003)
+    bad = 0
+    for _len in range(limit):
+        xs = [rng.randrange(10) for _ in range(_len)]
+        for lo in range(limit):
+            for hi in range(limit):
+                w = sub(hi, lo)
+                for i in range(limit + 2):
+                    if i < w and nth(nats_slice_py(xs, lo, hi), i) != \
+                       nth(xs, lo + i):
+                        print(f"FAIL slice_nth lo={lo} hi={hi} i={i}")
+                        bad += 1
+                    if i < min(w, _len) and nth(nats_take_py(xs, min(w, _len)), i) != \
+                       nth(xs, i):
+                        print(f"FAIL take_nth k={w} i={i}")
+                        bad += 1
+                if len(nats_slice_py(xs, lo, hi)) > w:
+                    print(f"FAIL slice_len lo={lo} hi={hi}")
+                    bad += 1
+    # csr rows: aligned src/delay pairs, same bounds
+    for nn in range(1, limit):
+        indptr = sorted(rng.randrange(6) for _ in range(nn + 1))
+        indptr[0] = 0
+        m = indptr[-1]
+        indices = [rng.randrange(nn) for _ in range(m)]
+        delays = [rng.randrange(4) for _ in range(m)]
+        for t in range(nn):
+            row_i = nats_slice_py(indices, indptr[t], indptr[t + 1])
+            row_d = nats_slice_py(delays, indptr[t], indptr[t + 1])
+            if len(row_i) != sub(indptr[t + 1], indptr[t]):
+                print(f"FAIL csr row len t={t}")
+                bad += 1
+            for i, v in enumerate(row_i):
+                if v != nth(indices, indptr[t] + i):
+                    print(f"FAIL csr row src t={t} i={i}")
+                    bad += 1
+                if row_d[i] != nth(delays, indptr[t] + i):
+                    print(f"FAIL csr row delay t={t} i={i}")
+                    bad += 1
+    # negative control: past the row's width the slice answers 0
+    xs = [7, 8, 9]
+    if nth(nats_slice_py(xs, 0, 2), 2) == nth(xs, 2):
+        print("FAIL bad_slice probe: saturated read should not equal the real row")
+        bad += 1
+    return bad
+
 def main() -> int:
     bad = 0
     bad += check_window_span()
@@ -728,6 +807,7 @@ def main() -> int:
     bad += check_history()
     bad += check_ring()
     bad += check_blend_wiring()
+    bad += check_csr_slice()
     if bad:
         print(f"{bad} FAILURES")
         return 1
@@ -741,7 +821,8 @@ def main() -> int:
           "+ the ring bridge (mod_lt / ring_first_lap): "
           "all properties hold (exhaustive small range, engine-side) "
           "+ the blend wiring (blend_adjacent / clamp_reads_same / "
-          "clamp_zero_frac): "
+          "clamp_zero_frac) "
+          "+ the CSR slice (take_nth / slice_nth / slice_len / csr rows): "
           "all properties hold (exhaustive small range, engine-side)")
     return 0
 
