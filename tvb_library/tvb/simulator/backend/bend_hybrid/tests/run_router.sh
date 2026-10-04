@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 BEND="${BEND:-$HOME/.bend/bin/bend}"
 fail=0
 
-gate=$("$BEND" PROOF_router.bend --verdict 2>&1 | tail -1)
+gate=$("$BEND" PROOF_router.bend --verdict 2>&1 | grep -v 'bend 2' | tail -1)
 if [ "$gate" = "ALL PROOFS CHECK" ]; then
   echo "ok   PROOF_router.bend --verdict"
 else
@@ -27,7 +27,7 @@ done
 cd tests
 for f in *.bend; do
   want=$(grep '^#|' "$f" | sed 's/^#|//')
-  got=$("$BEND" "$f" 2>&1)
+  got=$("$BEND" "$f" 2>&1 | grep -v 'bend 2')
   if [ "$got" = "$want" ]; then
     echo "ok   $f"
   else

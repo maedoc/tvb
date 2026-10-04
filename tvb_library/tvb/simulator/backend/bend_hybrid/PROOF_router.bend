@@ -2422,3 +2422,673 @@ def csr_window_lo_go(+n: Nat, +horizon: Nat, +ds: List<&2, Nat>, i: Nat,
 def Laws.csr_window_lo(n, nsrc, horizon, c, i, h):
   csr_window_lo_go(n, horizon, R.csr_delays(c), i,
                    csr_ok_delays_go(nsrc, horizon, c, h))
+
+# --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# 7c. the divmod machinery: the twin (mm), the bridge, the splice, the proofs
+# --------------------------------------------------------------------------
+# The four divmod laws are proved through a STRUCTURAL TWIN of the divmod
+# go-machine.  The go-machine
+#
+#   go(0,    m, d, r) = (d, r)
+#   go(1+n,  0, d, r) = go(n, r, 1+d, 0)     -- the wrap
+#   go(1+n, 1+m, d, r) = go(n, m, d, 1+r)    -- the normal tick
+#
+# hides the countdown (m) inside the recursion: after a wrap the OLD SLOT
+# becomes the new countdown, but an observer of go's OUTPUT can never see
+# it -- the state is existential.  The twin keeps it:
+#
+#   mm(n, m, r) = (countdown left, slot)          -- a Nat & Nat
+#
+# with the SAME tick/wrap recursion (the quotient d dropped -- it never
+# touches the slot), so the two machines agree on slots (go_state: the
+# go-machine's remainder IS the structural twin's slot).  The visible
+# countdown buys exactly the lemmas the ring correspondence needs:
+#
+#   go_state:   snd(go(n, m, d, r)) == snd(mm(n, m, r)).  The bridge, by
+#               induction on n peeling m exactly as go does.
+#   splice_go:  snd(mm(a+b, m, r)) ==
+#               snd(mm(b, fst(mm(a, m, r)), snd(mm(a, m, r)))).
+#               THE append lemma: running a+b ticks is running a, then
+#               running b FROM THE STATE a left behind.  go cannot even
+#               STATE this (its state is hidden); mm can, and the proof
+#               is a plain induction on a -- every case is the IH itself.
+#   slot_add:   the fence in STATE form: t <= m forces the slot to be
+#               exactly r + t (no wrap can happen, the countdown outruns
+#               the ticks).  This is mod_lt's fence re-cut for the
+#               machine: the le_ok(t, m) witness peels one level per
+#               tick, while lt_ok's add(t, 1n) shape would be stuck
+#               under the successor.
+#   lapg_cl/slg: one full lap (1+m ticks from countdown m) lands the
+#               machine on the CANONICAL state: countdown r+m, slot 0.
+#               mod_period is splice at the lap + this reset.
+#   suminv:     states REACHED from a state with budget cp (the
+#               countdown plus the slot) keep that budget -- the normal
+#               tick trades one countdown for one slot (the same sum,
+#               regrouped by add_succ), and the wrap hands the slot to
+#               the countdown wholesale.  This is the bridge between
+#               "t <= cp" (what mod_inj_lap knows) and "t <= m + r"
+#               (what the machine injectivity needs at the reached
+#               state).
+#   mi_go:      THE machine injectivity: 1 <= t <= m+r forces the slot
+#               after t ticks to differ from the current slot r.  A
+#               TRICHOTOMY on (t, m), not an induction on t -- the
+#               target slot would move with the state under tick
+#               peeling, so instead:
+#                 t <= m      no wrap: slot_add pins the slot to r+t,
+#                             which differs from r (add_t_ne);
+#                 t >= 1+m    one full lap lands on (r+m, 0) (the lap
+#                             lemmas + splice at the lap) and the
+#                             REMAINDER s = t-(1+m) charges the slot
+#                             from 0 inside r's own countdown:
+#                             slot_add pins it to s, and the budget
+#                             bound gives 1+s <= r (mi_wrap_hb), so
+#                             s != r (lt_ne_go).  The wrap is exactly
+#                             where an under-capacity ring (bad_cap)
+#                             would come back around to r itself --
+#                             the budget is what forbids the extra lap.
+#
+# With these, the four laws are Equal.cong/trans plumbing:
+#
+#   mod_bound:       bridge, then the twin's slot never exceeds the
+#                    state's budget (mbound_go), at the canonical state
+#                    the budget is cp + 0.  Numpy gloss: i % cap < cap.
+#   mod_period:      bridge, commute the lap to the front, splice at the
+#                    lap, the lap reset.  Numpy gloss: (i+cap)%cap==i%cap.
+#   mod_period_good: the pinned instance 9 % 4 == 5 % 4 == 1.
+#   mod_inj_lap:     bridge both mods, splice at i, suminv + mi_go at
+#                    the reached state.  Numpy gloss: two writes less
+#                    than a lap apart never share a slot.
+# --------------------------------------------------------------------------
+
+# transport a True-fact across a Bool equality: {P == Q} with {Q == True}
+# gives {P == True}.  (Equal.trans does all the work; this is the
+# readability wrapper every bridge step below uses.)
+def btrans(P: Bool, Q: Bool, e: {P == Q : Bool}, h: {Q == True{} : Bool})
+  -> {P == True{} : Bool}:
+  Equal.trans(Bool, P, Q, True{}, e, h)
+
+# the twin: divmod.go's recursion with the countdown kept in the output.
+def mm(n: Nat, m: Nat, r: Nat) -> Nat & Nat:
+  match n:
+    case 0n:
+      (m, r)
+    case 1n+np:
+      match m:
+        case 0n:
+          mm(np, r, 0n)
+        case 1n+mp:
+          mm(np, mp, 1n+r)
+
+# the bridge: the go-machine and the twin agree on the slot; the quotient
+# d is irrelevant to it.  Induction on n, peeling m exactly as go does.
+def go_state(n: Nat, m: Nat, d: Nat, r: Nat)
+  -> {Pair.snd(Nat, Nat, Nat.divmod.go(n, m, d, r))
+      == Pair.snd(Nat, Nat, mm(n, m, r)) : Nat}:
+  match n:
+    case 0n:
+      {==}
+    case 1n+np:
+      match m:
+        case 0n:
+          go_state(np, r, 1n+d, 0n)
+        case 1n+mp:
+          go_state(np, mp, d, 1n+r)
+
+# the append lemma: a+b ticks from state (m, r) is b ticks from whatever
+# state the first a ticks left.  Induction on a; both sides peel the same
+# transition, so every case is the IH itself (the bases are definitional).
+def splice_go(a: Nat, b: Nat, m: Nat, r: Nat)
+  -> {Pair.snd(Nat, Nat, mm(Nat.add(a, b), m, r))
+      == Pair.snd(Nat, Nat,
+                  mm(b, Pair.fst(Nat, Nat, mm(a, m, r)),
+                        Pair.snd(Nat, Nat, mm(a, m, r)))) : Nat}:
+  match a:
+    case 0n:
+      {==}
+    case 1n+p:
+      match m:
+        case 0n:
+          splice_go(p, b, r, 0n)
+        case 1n+mp:
+          splice_go(p, b, mp, 1n+r)
+
+# the slot never exceeds the state's whole budget, right-added form:
+# r <= m + r.  The base is le_refl_b (m = 0), the step le_succ_of_le.
+def slot_le_budget(+m: Nat, +r: Nat)
+  -> {Nat.is_le(r, Nat.add(m, r)) == True{} : Bool}:
+  match m:
+    case 0n:
+      Laws.le_refl_b(r)
+    case 1n++p:
+      Laws.le_succ_of_le(r, Nat.add(p, r), slot_le_budget(p, r))
+
+# the twin's slot is bounded by the state's budget: slot <= m + r.
+# Lockstep induction on n; the wrap case (m = 0) resets the budget to
+# r + 0 (glued by add_zero), the normal step regroups it (add_succ).
+def mbound_go(n: Nat, m: Nat, +r: Nat)
+  -> {Nat.is_le(Pair.snd(Nat, Nat, mm(n, m, r)), Nat.add(m, r))
+      == True{} : Bool}:
+  match n:
+    case 0n:
+      slot_le_budget(m, r)
+    case 1n++p:
+      match m:
+        case 0n:
+          btrans(Nat.is_le(Pair.snd(Nat, Nat, mm(p, r, 0n)), r),
+                 Nat.is_le(Pair.snd(Nat, Nat, mm(p, r, 0n)), Nat.add(r, 0n)),
+                 Equal.cong(Nat, Bool,
+                   x => Nat.is_le(Pair.snd(Nat, Nat, mm(p, r, 0n)), x),
+                   r, Nat.add(r, 0n),
+                   Equal.sym(Nat, Nat.add(r, 0n), r, Laws.add_zero(r))),
+                 mbound_go(p, r, 0n))
+        case 1n++mp:
+          btrans(Nat.is_le(Pair.snd(Nat, Nat, mm(p, mp, 1n+r)),
+                           1n+Nat.add(mp, r)),
+                 Nat.is_le(Pair.snd(Nat, Nat, mm(p, mp, 1n+r)),
+                           Nat.add(mp, 1n+r)),
+                 Equal.cong(Nat, Bool,
+                   x => Nat.is_le(Pair.snd(Nat, Nat, mm(p, mp, 1n+r)), x),
+                   1n+Nat.add(mp, r), Nat.add(mp, 1n+r),
+                   Equal.sym(Nat, Nat.add(mp, 1n+r), 1n+Nat.add(mp, r),
+                             Laws.add_succ(mp, r))),
+                 mbound_go(p, mp, 1n+r))
+
+# the fence in state form: t <= m forces the slot to be exactly r + t.
+# The countdown consumes one per tick while the slot charges one, so
+# below the fence no wrap can happen and the accumulation is linear.
+# The le_ok witness peels one level per tick; t = 1+p at m = 0 is
+# unsatisfiable and dies by the witness.
+def slot_add(n: Nat, m: Nat, +r: Nat, h: R.le_ok(n, m))
+  -> {Pair.snd(Nat, Nat, mm(n, m, r)) == Nat.add(r, n) : Nat}:
+  match n m h:
+    case 0n _ _:
+      Equal.sym(Nat, Nat.add(r, 0n), r, Laws.add_zero(r))
+    case 1n+p 0n h:
+      Empty.absurd({Pair.snd(Nat, Nat, mm(1n+p, 0n, r))
+                    == Nat.add(r, 1n+p) : Nat}, h)
+    case 1n++p 1n++mp h:
+      Equal.trans(Nat,
+        Pair.snd(Nat, Nat, mm(p, mp, 1n+r)),
+        Nat.add(1n+r, p),
+        Nat.add(r, 1n+p),
+        slot_add(p, mp, 1n+r, h),
+        Equal.sym(Nat, Nat.add(r, 1n+p), Nat.add(1n+r, p),
+                  Laws.add_succ(r, p)))
+
+# one full lap, countdown half: 1+m ticks from (m, r) leave countdown
+# r + m (the slot r charged m normal ticks, then became the countdown
+# at the wrap).
+def lapg_cl(+m: Nat, +r: Nat)
+  -> {Pair.fst(Nat, Nat, mm(1n+m, m, r)) == Nat.add(r, m) : Nat}:
+  match m:
+    case 0n:
+      Equal.sym(Nat, Nat.add(r, 0n), r, Laws.add_zero(r))
+    case 1n++mp:
+      Equal.trans(Nat,
+        Pair.fst(Nat, Nat, mm(1n+mp, mp, 1n+r)),
+        Nat.add(1n+r, mp),
+        Nat.add(r, 1n+mp),
+        lapg_cl(mp, 1n+r),
+        Equal.sym(Nat, Nat.add(r, 1n+mp), Nat.add(1n+r, mp),
+                  Laws.add_succ(r, mp)))
+
+# one full lap, slot half: the slot resets to 0.  Induction on the
+# countdown; the wrap is the last tick and hands the countdown to the
+# twin's state.
+def lapg_sl(m: Nat, r: Nat)
+  -> {Pair.snd(Nat, Nat, mm(1n+m, m, r)) == 0n : Nat}:
+  match m:
+    case 0n:
+      {==}
+    case 1n+mp:
+      lapg_sl(mp, 1n+r)
+
+# a < b implies a != b, in the decider shape the wrap case needs
+# (le_ok(1+a, b) is the machine's own "one more tick than the fence").
+def lt_ne_go(a: Nat, b: Nat, h: R.le_ok(Nat.add(1n, a), b))
+  -> {Nat.is_ne(a, b) == True{} : Bool}:
+  match a b h:
+    case 0n 0n h:
+      Empty.absurd({Nat.is_ne(0n, 0n) == True{} : Bool}, h)
+    case 0n 1n+q h:
+      {==}
+    case 1n+p 0n h:
+      Empty.absurd({Nat.is_ne(1n+p, 0n) == True{} : Bool}, h)
+    case 1n+p 1n+q h:
+      lt_ne_go(p, q, h)
+
+# the fence weakened by one: 1+x <= r implies x <= r.  Needed because
+# the wrap case's remaining ticks sit one below the fence.
+def lemon1_go(x: Nat, r: Nat, +h: {Nat.is_le(1n+x, r) == True{} : Bool})
+  -> {Nat.is_le(x, r) == True{} : Bool}:
+  match x r h:
+    case 0n 0n h:
+      {==}
+    case 0n 1n+rq h:
+      {==}
+    case 1n+q 0n h:
+      Bool.fne({Nat.is_le(1n+q, 0n) == True{} : Bool}, h)
+    case 1n+q 1n+rq h:
+      lemon1_go(q, rq, h)
+
+# r + t != r whenever 1 <= t: the slot charges past the target.  The
+# t = 0 cases die on h1 (is_le(1, 0) is literally False); the succ step
+# peels one successor on both sides.
+def add_t_ne(r: Nat, t: Nat, h: {Nat.is_le(1n, t) == True{} : Bool})
+  -> {Nat.is_ne(Nat.add(r, t), r) == True{} : Bool}:
+  match r t h:
+    case 0n 0n h:
+      Bool.fne({Nat.is_ne(Nat.add(0n, 0n), 0n) == True{} : Bool}, h)
+    case 0n 1n+q h:
+      {==}
+    case 1n+p 0n h:
+      Bool.fne({Nat.is_ne(Nat.add(1n+p, 0n), 1n+p) == True{} : Bool}, h)
+    case 1n+p 1n+q h:
+      add_t_ne(p, 1n+q, h)
+
+# cancellation on the shared left addend: m + x <= m + y implies x <= y.
+# Peeling m peels the shared successor on both sides; m = 0 is the
+# identity.  This converts the budget bound (t <= m + r) into the
+# slot-vs-countdown comparison the wrap case needs.
+def add_le_cancel(m: Nat, x: Nat, y: Nat,
+                  h: {Nat.is_le(Nat.add(m, x), Nat.add(m, y))
+                      == True{} : Bool})
+  -> {Nat.is_le(x, y) == True{} : Bool}:
+  match m h:
+    case 0n h:
+      h
+    case 1n+p h:
+      add_le_cancel(p, x, y, h)
+
+# the reached-state invariant: from a state whose budget is cp (the
+# countdown m plus the slot r), any number of ticks keeps the budget --
+# the normal tick trades one countdown for one slot (the same sum,
+# regrouped by add_succ), and the wrap hands the slot to the countdown
+# wholesale.  This is what makes "t <= cp" mean "t <= m + r" at a
+# reached state: the budget never left cp.
+def suminv(i: Nat, m: Nat, +r: Nat, +cp: Nat,
+           +h: {Nat.add(m, r) == cp : Nat})
+  -> {Nat.add(Pair.fst(Nat, Nat, mm(i, m, r)),
+              Pair.snd(Nat, Nat, mm(i, m, r))) == cp : Nat}:
+  match i:
+    case 0n:
+      h
+    case 1n+p:
+      match m:
+        case 0n:
+          suminv(p, r, 0n, cp,
+                 Equal.trans(Nat, Nat.add(r, 0n), r, cp,
+                             Laws.add_zero(r), h))
+        case 1n++mp:
+          suminv(p, mp, 1n+r, cp,
+                 Equal.trans(Nat, Nat.add(mp, 1n+r), 1n+Nat.add(mp, r), cp,
+                             Laws.add_succ(mp, r), h))
+
+# the trichotomy gadget: every pair of Nats splits into a <= b or
+# a >= 1+b, as CONTINUATIONS carrying the decider witness (the le_ok
+# Type form, which refines one successor per step).  Witness-passing
+# avoids transporting proofs across Bool equalities entirely.
+def nat_cases(a: Nat, b: Nat, -X: Type,
+              kle: R.le_ok(a, b) -> X,
+              kgt: R.le_ok(Nat.add(1n, b), a) -> X) -> X:
+  match a b:
+    case 0n _:
+      kle(Unit{})
+    case 1n+p 0n:
+      kgt(Unit{})
+    case 1n+p 1n+q:
+      nat_cases(p, q, X, kle, kgt)
+
+# the Bool-decider witness, extracted structurally: from a proof of
+# is_le(a, b) == True one gets the le_ok(a, b) view (the unsatisfiable
+# branches reduce the hypothesis to {False == True} and die by fne).
+def b_le(a: Nat, b: Nat, h: {Nat.is_le(a, b) == True{} : Bool})
+  -> R.le_ok(a, b):
+  match a b h:
+    case 0n _ _:
+      Unit{}
+    case 1n+p 0n h:
+      Bool.fne(R.le_ok(1n+p, 0n), h)
+    case 1n+p 1n+q h:
+      b_le(p, q, h)
+
+# the no-wrap branch of the machine injectivity: t <= m, so slot_add
+# pins the slot to r + t, and r + t differs from r because t >= 1.
+def mi_kle(+t: Nat, +m: Nat, +r: Nat,
+           h1: {Nat.is_le(1n, t) == True{} : Bool},
+           wkle: R.le_ok(t, m))
+  -> {Nat.is_ne(Pair.snd(Nat, Nat, mm(t, m, r)), r) == True{} : Bool}:
+  btrans(Nat.is_ne(Pair.snd(Nat, Nat, mm(t, m, r)), r),
+         Nat.is_ne(Nat.add(r, t), r),
+         Equal.cong(Nat, Bool, x => Nat.is_ne(x, r),
+                    Pair.snd(Nat, Nat, mm(t, m, r)), Nat.add(r, t),
+                    slot_add(t, m, r, wkle)),
+         add_t_ne(r, t, h1))
+
+# the regrouping: m + (1+s) == t, where s = t - (1+m).  sub_add_cancel
+# gives s + (1+m) == t; two associativity/commutativity steps move the
+# m to the front: s + (1+m) -> 1 + (s+m) -> 1 + (m+s) == m + (1+s).
+def t_to_ms(+t: Nat, +m: Nat,
+            +h3: {Nat.is_le(Nat.add(1n, m), t) == True{} : Bool})
+  -> {Nat.add(m, Nat.add(1n, Nat.sub(t, Nat.add(1n, m)))) == t : Nat}:
+  Equal.trans(Nat,
+    Nat.add(m, Nat.add(1n, Nat.sub(t, Nat.add(1n, m)))),
+    1n+Nat.add(m, Nat.sub(t, Nat.add(1n, m))),
+    t,
+    Laws.add_succ(m, Nat.sub(t, Nat.add(1n, m))),
+    Equal.trans(Nat,
+      1n+Nat.add(m, Nat.sub(t, Nat.add(1n, m))),
+      1n+Nat.add(Nat.sub(t, Nat.add(1n, m)), m),
+      t,
+      Equal.cong(Nat, Nat, x => 1n+x,
+        Nat.add(m, Nat.sub(t, Nat.add(1n, m))),
+        Nat.add(Nat.sub(t, Nat.add(1n, m)), m),
+        Laws.add_comm(m, Nat.sub(t, Nat.add(1n, m)))),
+      Equal.trans(Nat,
+        1n+Nat.add(Nat.sub(t, Nat.add(1n, m)), m),
+        Nat.add(Nat.sub(t, Nat.add(1n, m)), Nat.add(1n, m)),
+        t,
+        Equal.sym(Nat,
+          Nat.add(Nat.sub(t, Nat.add(1n, m)), Nat.add(1n, m)),
+          1n+Nat.add(Nat.sub(t, Nat.add(1n, m)), m),
+          Laws.add_succ(Nat.sub(t, Nat.add(1n, m)), m)),
+        Laws.sub_add_cancel(t, Nat.add(1n, m), h3))))
+
+# the mirror regrouping: (1+m)+s == t.  t_to_ms gives m+(1+s) == t;
+# both sides are 1+(m+s), so one add_succ on each side closes it.
+def t_to_1ms(+t: Nat, +m: Nat,
+             +h3: {Nat.is_le(Nat.add(1n, m), t) == True{} : Bool})
+  -> {Nat.add(Nat.add(1n, m), Nat.sub(t, Nat.add(1n, m))) == t : Nat}:
+  Equal.trans(Nat,
+    Nat.add(Nat.add(1n, m), Nat.sub(t, Nat.add(1n, m))),
+    Nat.add(Nat.sub(t, Nat.add(1n, m)), Nat.add(1n, m)),
+    t,
+    Laws.add_comm(Nat.add(1n, m), Nat.sub(t, Nat.add(1n, m))),
+    Equal.trans(Nat,
+      Nat.add(Nat.sub(t, Nat.add(1n, m)), Nat.add(1n, m)),
+      Nat.add(m, Nat.add(1n, Nat.sub(t, Nat.add(1n, m)))),
+      t,
+      Equal.trans(Nat,
+        Nat.add(Nat.sub(t, Nat.add(1n, m)), Nat.add(1n, m)),
+        1n+Nat.add(m, Nat.sub(t, Nat.add(1n, m))),
+        Nat.add(m, Nat.add(1n, Nat.sub(t, Nat.add(1n, m)))),
+        Equal.trans(Nat,
+          Nat.add(Nat.sub(t, Nat.add(1n, m)), Nat.add(1n, m)),
+          1n+Nat.add(Nat.sub(t, Nat.add(1n, m)), m),
+          1n+Nat.add(m, Nat.sub(t, Nat.add(1n, m))),
+          Laws.add_succ(Nat.sub(t, Nat.add(1n, m)), m),
+          Equal.cong(Nat, Nat,
+            z => 1n+z,
+            Nat.add(Nat.sub(t, Nat.add(1n, m)), m),
+            Nat.add(m, Nat.sub(t, Nat.add(1n, m))),
+            Laws.add_comm(Nat.sub(t, Nat.add(1n, m)), m))),
+        Equal.sym(Nat,
+          Nat.add(m, Nat.add(1n, Nat.sub(t, Nat.add(1n, m)))),
+          1n+Nat.add(m, Nat.sub(t, Nat.add(1n, m))),
+          Laws.add_succ(m, Nat.sub(t, Nat.add(1n, m))))),
+      t_to_ms(t, m, h3)))
+
+# the wrap branch's arithmetic core: from t >= 1+m and the budget bound
+# t <= m + r, the remainder s = t - (1+m) satisfies 1+s <= r.  Proof:
+# sub_add_cancel turns m + (1+s) back into t (the subtraction cancels),
+# so after cancelling the shared m the goal IS the budget bound h2.
+def mi_wrap_hb(+t: Nat, +m: Nat, +r: Nat,
+               +h2: {Nat.is_le(t, Nat.add(m, r)) == True{} : Bool},
+               +h3: {Nat.is_le(Nat.add(1n, m), t) == True{} : Bool})
+  -> {Nat.is_le(Nat.add(1n, Nat.sub(t, Nat.add(1n, m))), r)
+      == True{} : Bool}:
+  add_le_cancel(m, Nat.add(1n, Nat.sub(t, Nat.add(1n, m))), r,
+    btrans(Nat.is_le(Nat.add(m, Nat.add(1n, Nat.sub(t, Nat.add(1n, m)))),
+                     Nat.add(m, r)),
+           Nat.is_le(t, Nat.add(m, r)),
+           Equal.cong(Nat, Bool, x => Nat.is_le(x, Nat.add(m, r)),
+             Nat.add(m, Nat.add(1n, Nat.sub(t, Nat.add(1n, m)))), t,
+             Equal.sym(Nat, t,
+               Nat.add(m, Nat.add(1n, Nat.sub(t, Nat.add(1n, m)))),
+               Equal.sym(Nat,
+                 Nat.add(m, Nat.add(1n, Nat.sub(t, Nat.add(1n, m)))),
+                 t,
+                 t_to_ms(t, m, h3)))),
+           h2))
+
+# the wrap branch: t >= 1+m.  Step 1: rewrite t as (1+m)+s (with
+# s = t-(1+m), by sub_add_cancel).  Step 2: splice the lap off, leaving
+# s ticks from the lap's landing state.  Step 3: the lap lemmas rewrite
+# the landing state's SLOT to 0 (lapg_sl) and its COUNTDOWN to r+m
+# (lapg_cl) -- the state is (r+m, 0), the canonical shape again.  Step
+# 4: slot_add pins the slot after s ticks from (r+m, 0) to 0+s
+# (add_zero), i.e. exactly s; mi_wrap_hb's 1+s <= r makes s != r
+# (lt_ne_go).  An under-capacity ring violates exactly here: with room
+# for one more lap the slot would come back around to r itself.
+def mi_wrap(+t: Nat, +m: Nat, +r: Nat,
+            +h2: {Nat.is_le(t, Nat.add(m, r)) == True{} : Bool},
+            +h3: {Nat.is_le(Nat.add(1n, m), t) == True{} : Bool})
+  -> {Nat.is_ne(Pair.snd(Nat, Nat, mm(t, m, r)), r) == True{} : Bool}:
+  btrans(Nat.is_ne(Pair.snd(Nat, Nat, mm(t, m, r)), r),
+    Nat.is_ne(Pair.snd(Nat, Nat,
+      mm(Nat.add(1n+m, Nat.sub(t, Nat.add(1n, m))), m, r)), r),
+    Equal.cong(Nat, Bool,
+      x => Nat.is_ne(Pair.snd(Nat, Nat, mm(x, m, r)), r),
+      t,
+      Nat.add(1n+m, Nat.sub(t, Nat.add(1n, m))),
+      Equal.sym(Nat, Nat.add(1n+m, Nat.sub(t, Nat.add(1n, m))), t,
+        t_to_1ms(t, m, h3))),
+    btrans(Nat.is_ne(Pair.snd(Nat, Nat,
+             mm(Nat.add(1n+m, Nat.sub(t, Nat.add(1n, m))), m, r)), r),
+      Nat.is_ne(Pair.snd(Nat, Nat,
+        mm(Nat.sub(t, Nat.add(1n, m)),
+           Pair.fst(Nat, Nat, mm(1n+m, m, r)),
+           Pair.snd(Nat, Nat, mm(1n+m, m, r)))), r),
+      Equal.cong(Nat, Bool,
+        x => Nat.is_ne(x, r),
+        Pair.snd(Nat, Nat,
+          mm(Nat.add(1n+m, Nat.sub(t, Nat.add(1n, m))), m, r)),
+        Pair.snd(Nat, Nat,
+          mm(Nat.sub(t, Nat.add(1n, m)),
+             Pair.fst(Nat, Nat, mm(1n+m, m, r)),
+             Pair.snd(Nat, Nat, mm(1n+m, m, r)))),
+        splice_go(1n+m, Nat.sub(t, Nat.add(1n, m)), m, r)),
+      btrans(Nat.is_ne(Pair.snd(Nat, Nat,
+               mm(Nat.sub(t, Nat.add(1n, m)),
+                  Pair.fst(Nat, Nat, mm(1n+m, m, r)),
+                  Pair.snd(Nat, Nat, mm(1n+m, m, r)))), r),
+        Nat.is_ne(Pair.snd(Nat, Nat,
+          mm(Nat.sub(t, Nat.add(1n, m)),
+             Pair.fst(Nat, Nat, mm(1n+m, m, r)), 0n)), r),
+        Equal.cong(Nat, Bool,
+          x => Nat.is_ne(Pair.snd(Nat, Nat,
+            mm(Nat.sub(t, Nat.add(1n, m)),
+               Pair.fst(Nat, Nat, mm(1n+m, m, r)), x)), r),
+          Pair.snd(Nat, Nat, mm(1n+m, m, r)), 0n,
+          lapg_sl(m, r)),
+        btrans(Nat.is_ne(Pair.snd(Nat, Nat,
+                 mm(Nat.sub(t, Nat.add(1n, m)),
+                    Pair.fst(Nat, Nat, mm(1n+m, m, r)), 0n)), r),
+          Nat.is_ne(Pair.snd(Nat, Nat,
+            mm(Nat.sub(t, Nat.add(1n, m)), Nat.add(r, m), 0n)), r),
+          Equal.cong(Nat, Bool,
+            x => Nat.is_ne(Pair.snd(Nat, Nat,
+              mm(Nat.sub(t, Nat.add(1n, m)), x, 0n)), r),
+            Pair.fst(Nat, Nat, mm(1n+m, m, r)), Nat.add(r, m),
+            lapg_cl(m, r)),
+          btrans(Nat.is_ne(Pair.snd(Nat, Nat,
+                   mm(Nat.sub(t, Nat.add(1n, m)), Nat.add(r, m), 0n)), r),
+            Nat.is_ne(Nat.add(0n, Nat.sub(t, Nat.add(1n, m))), r),
+            Equal.cong(Nat, Bool,
+              x => Nat.is_ne(x, r),
+              Pair.snd(Nat, Nat,
+                mm(Nat.sub(t, Nat.add(1n, m)), Nat.add(r, m), 0n)),
+              Nat.add(0n, Nat.sub(t, Nat.add(1n, m))),
+              slot_add(Nat.sub(t, Nat.add(1n, m)), Nat.add(r, m), 0n,
+                b_le(Nat.sub(t, Nat.add(1n, m)), Nat.add(r, m),
+                  btrans(Nat.is_le(Nat.sub(t, Nat.add(1n, m)), Nat.add(r, m)),
+                    Nat.is_le(Nat.sub(t, Nat.add(1n, m)), Nat.add(m, r)),
+                    Equal.cong(Nat, Bool,
+                      x => Nat.is_le(Nat.sub(t, Nat.add(1n, m)), x),
+                      Nat.add(r, m), Nat.add(m, r),
+                      Laws.add_comm(r, m)),
+                    Laws.le_trans(Nat.sub(t, Nat.add(1n, m)), r, Nat.add(m, r),
+                      lemon1_go(Nat.sub(t, Nat.add(1n, m)), r,
+                        mi_wrap_hb(t, m, r, h2, h3)),
+                      slot_le_budget(m, r)))))),
+            btrans(Nat.is_ne(Nat.add(0n, Nat.sub(t, Nat.add(1n, m))), r),
+              Nat.is_ne(Nat.sub(t, Nat.add(1n, m)), r),
+              Equal.cong(Nat, Bool, x => Nat.is_ne(x, r),
+                Nat.add(0n, Nat.sub(t, Nat.add(1n, m))),
+                Nat.sub(t, Nat.add(1n, m)),
+                {==}),
+              lt_ne_go(Nat.sub(t, Nat.add(1n, m)), r,
+                b_le(Nat.add(1n, Nat.sub(t, Nat.add(1n, m))), r,
+                  mi_wrap_hb(t, m, r, h2, h3)))))))))
+
+# THE machine injectivity: 1 <= t <= m+r forces the slot after t ticks
+# to differ from the current slot r.  The trichotomy (not an induction
+# on t -- the target would move under tick peeling):
+#   t <= m   the fence holds, no wrap (mi_kle);
+#   t >= 1+m one lap plus a remainder strictly inside r (mi_wrap).
+def mi_go(+t: Nat, +m: Nat, +r: Nat,
+          +h1: {Nat.is_le(1n, t) == True{} : Bool},
+          +h2: {Nat.is_le(t, Nat.add(m, r)) == True{} : Bool})
+  -> {Nat.is_ne(Pair.snd(Nat, Nat, mm(t, m, r)), r) == True{} : Bool}:
+  nat_cases(t, m,
+    {Nat.is_ne(Pair.snd(Nat, Nat, mm(t, m, r)), r) == True{} : Bool},
+    wkle => mi_kle(t, m, r, h1, wkle),
+    wkgt => mi_wrap(t, m, r, h2, Laws.le_ok_iff(Nat.add(1n, m), t, wkgt)))
+
+# mod_bound: the slot is inside the ring.  The go-machine's slot is the
+# twin's (go_state); the twin's slot never exceeds the state's budget
+# (mbound_go); at the canonical state (cp, 0) the budget is cp + 0.
+# The numpy gloss: i % cap is a valid index into a cap-length buffer.
+def Laws.mod_bound(n, cp):
+  Equal.trans(Bool,
+    Nat.is_le(Pair.snd(Nat, Nat, Nat.divmod.go(n, cp, 0n, 0n)), cp),
+    Nat.is_le(Pair.snd(Nat, Nat, mm(n, cp, 0n)), cp),
+    True{},
+    Equal.cong(Nat, Bool, x => Nat.is_le(x, cp),
+      Pair.snd(Nat, Nat, Nat.divmod.go(n, cp, 0n, 0n)),
+      Pair.snd(Nat, Nat, mm(n, cp, 0n)),
+      go_state(n, cp, 0n, 0n)),
+    btrans(Nat.is_le(Pair.snd(Nat, Nat, mm(n, cp, 0n)), cp),
+           Nat.is_le(Pair.snd(Nat, Nat, mm(n, cp, 0n)), Nat.add(cp, 0n)),
+           Equal.cong(Nat, Bool,
+             x => Nat.is_le(Pair.snd(Nat, Nat, mm(n, cp, 0n)), x),
+             cp, Nat.add(cp, 0n),
+             Equal.sym(Nat, Nat.add(cp, 0n), cp, Laws.add_zero(cp))),
+           mbound_go(n, cp, 0n)))
+
+# mod_period: one lap later the slot address repeats.  Bridge both mods
+# to the twin; commute the lap to the front (add_comm); splice at the
+# lap (1+cp ticks from (cp, 0) is n ticks from the lap's landing
+# state); the lap lemmas say that landing state IS (cp, 0) again --
+# countdown 0+cp (lapg_cl), slot 0 (lapg_sl).  The numpy gloss:
+# (i + cap) % cap == i % cap -- the ring's whole point.
+def Laws.mod_period(n, cp):
+  Equal.trans(Nat,
+    Nat.mod(Nat.add(n, 1n+cp), 1n+cp),
+    Pair.snd(Nat, Nat, mm(Nat.add(n, 1n+cp), cp, 0n)),
+    Nat.mod(n, 1n+cp),
+    go_state(Nat.add(n, 1n+cp), cp, 0n, 0n),
+    Equal.trans(Nat,
+      Pair.snd(Nat, Nat, mm(Nat.add(n, 1n+cp), cp, 0n)),
+      Pair.snd(Nat, Nat, mm(n, cp, 0n)),
+      Pair.snd(Nat, Nat, Nat.divmod.go(n, cp, 0n, 0n)),
+      Equal.trans(Nat,
+        Pair.snd(Nat, Nat, mm(Nat.add(n, 1n+cp), cp, 0n)),
+        Pair.snd(Nat, Nat, mm(Nat.add(1n+cp, n), cp, 0n)),
+        Pair.snd(Nat, Nat, mm(n, cp, 0n)),
+        Equal.cong(Nat, Nat, x => Pair.snd(Nat, Nat, mm(x, cp, 0n)),
+          Nat.add(n, 1n+cp), Nat.add(1n+cp, n),
+          Equal.trans(Nat, Nat.add(n, 1n+cp), 1n+Nat.add(n, cp), Nat.add(1n+cp, n),
+            Laws.add_succ(n, cp),
+            Equal.cong(Nat, Nat, z => 1n+z, Nat.add(n, cp), Nat.add(cp, n),
+              Laws.add_comm(n, cp)))),
+        Equal.trans(Nat,
+          Pair.snd(Nat, Nat, mm(Nat.add(1n+cp, n), cp, 0n)),
+          Pair.snd(Nat, Nat,
+            mm(n, Pair.fst(Nat, Nat, mm(1n+cp, cp, 0n)),
+                  Pair.snd(Nat, Nat, mm(1n+cp, cp, 0n)))),
+          Pair.snd(Nat, Nat, mm(n, cp, 0n)),
+          splice_go(1n+cp, n, cp, 0n),
+          Equal.trans(Nat,
+            Pair.snd(Nat, Nat,
+              mm(n, Pair.fst(Nat, Nat, mm(1n+cp, cp, 0n)),
+                    Pair.snd(Nat, Nat, mm(1n+cp, cp, 0n)))),
+            Pair.snd(Nat, Nat,
+              mm(n, Pair.fst(Nat, Nat, mm(1n+cp, cp, 0n)), 0n)),
+            Pair.snd(Nat, Nat, mm(n, cp, 0n)),
+            Equal.cong(Nat, Nat,
+              x => Pair.snd(Nat, Nat, mm(n, Pair.fst(Nat, Nat, mm(1n+cp, cp, 0n)), x)),
+              Pair.snd(Nat, Nat, mm(1n+cp, cp, 0n)), 0n,
+              lapg_sl(cp, 0n)),
+            Equal.cong(Nat, Nat,
+              x => Pair.snd(Nat, Nat, mm(n, x, 0n)),
+              Pair.fst(Nat, Nat, mm(1n+cp, cp, 0n)), Nat.add(0n, cp),
+              lapg_cl(cp, 0n))))),
+      Equal.sym(Nat,
+        Pair.snd(Nat, Nat, Nat.divmod.go(n, cp, 0n, 0n)),
+        Pair.snd(Nat, Nat, mm(n, cp, 0n)),
+        go_state(n, cp, 0n, 0n))))
+
+# the pinned instance: 9 % 4 == 5 % 4 == 1, one lap apart.
+def Laws.mod_period_good():
+  Laws.mod_period(5n, 3n)
+
+# mod_inj_lap: THE no-clobber law.  Bridge both mods to the twin;
+# splice at i -- so the write at i+t is t ticks from the state i left
+# behind, (cl_i, sl_i); the reached-state invariant (suminv) says that
+# state's budget is still cp, which is exactly the fence mi_go needs to
+# keep t inside one lap of it.  mi_go closes: the slot at i+t differs
+# from the slot at i.  The numpy gloss: two writes less than a lap
+# apart never share a slot.
+def Laws.mod_inj_lap(i, t, cp, h1, h2):
+  Equal.trans(Bool,
+    Nat.is_ne(Pair.snd(Nat, Nat, Nat.divmod.go(Nat.add(i, t), cp, 0n, 0n)),
+              Pair.snd(Nat, Nat, Nat.divmod.go(i, cp, 0n, 0n))),
+    Nat.is_ne(Pair.snd(Nat, Nat,
+                        mm(t, Pair.fst(Nat, Nat, mm(i, cp, 0n)),
+                              Pair.snd(Nat, Nat, mm(i, cp, 0n)))),
+              Pair.snd(Nat, Nat, Nat.divmod.go(i, cp, 0n, 0n))),
+    True{},
+    Equal.cong(Nat, Bool,
+      x => Nat.is_ne(x, Pair.snd(Nat, Nat, Nat.divmod.go(i, cp, 0n, 0n))),
+      Pair.snd(Nat, Nat, Nat.divmod.go(Nat.add(i, t), cp, 0n, 0n)),
+      Pair.snd(Nat, Nat,
+        mm(t, Pair.fst(Nat, Nat, mm(i, cp, 0n)),
+              Pair.snd(Nat, Nat, mm(i, cp, 0n)))),
+      Equal.trans(Nat,
+        Pair.snd(Nat, Nat, Nat.divmod.go(Nat.add(i, t), cp, 0n, 0n)),
+        Pair.snd(Nat, Nat, mm(Nat.add(i, t), cp, 0n)),
+        Pair.snd(Nat, Nat,
+          mm(t, Pair.fst(Nat, Nat, mm(i, cp, 0n)),
+                Pair.snd(Nat, Nat, mm(i, cp, 0n)))),
+        go_state(Nat.add(i, t), cp, 0n, 0n),
+        splice_go(i, t, cp, 0n))),
+    Equal.trans(Bool,
+      Nat.is_ne(Pair.snd(Nat, Nat,
+                        mm(t, Pair.fst(Nat, Nat, mm(i, cp, 0n)),
+                              Pair.snd(Nat, Nat, mm(i, cp, 0n)))),
+              Pair.snd(Nat, Nat, Nat.divmod.go(i, cp, 0n, 0n))),
+      Nat.is_ne(Pair.snd(Nat, Nat,
+                        mm(t, Pair.fst(Nat, Nat, mm(i, cp, 0n)),
+                              Pair.snd(Nat, Nat, mm(i, cp, 0n)))),
+              Pair.snd(Nat, Nat, mm(i, cp, 0n))),
+      True{},
+      Equal.cong(Nat, Bool,
+        x => Nat.is_ne(Pair.snd(Nat, Nat,
+                          mm(t, Pair.fst(Nat, Nat, mm(i, cp, 0n)),
+                                Pair.snd(Nat, Nat, mm(i, cp, 0n)))), x),
+        Pair.snd(Nat, Nat, Nat.divmod.go(i, cp, 0n, 0n)),
+        Pair.snd(Nat, Nat, mm(i, cp, 0n)),
+        go_state(i, cp, 0n, 0n)),
+      mi_go(t, Pair.fst(Nat, Nat, mm(i, cp, 0n)),
+               Pair.snd(Nat, Nat, mm(i, cp, 0n)), h1,
+        btrans(Nat.is_le(t, Nat.add(Pair.fst(Nat, Nat, mm(i, cp, 0n)),
+                                    Pair.snd(Nat, Nat, mm(i, cp, 0n)))),
+               Nat.is_le(t, cp),
+               Equal.cong(Nat, Bool, x => Nat.is_le(t, x),
+                 Nat.add(Pair.fst(Nat, Nat, mm(i, cp, 0n)),
+                         Pair.snd(Nat, Nat, mm(i, cp, 0n))), cp,
+                 suminv(i, cp, 0n, cp, Laws.add_zero(cp))),
+               h2))))

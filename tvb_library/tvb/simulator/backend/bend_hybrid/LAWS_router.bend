@@ -1574,3 +1574,51 @@ law le_of_lt:
   for b: Nat
   for +h: {Nat.is_lt(a, b) == True{} : Bool}
   {Nat.is_le(a, b) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# 7b. the divmod theory: the deferred div/mod debt, paid in full
+# --------------------------------------------------------------------------
+# The ring correspondence needs three facts about Nat.mod that no existing
+# law provides: the remainder is BOUNDED (a slot address is in bounds), the
+# modulus is PERIODIC (one lap later the slot address repeats), and the
+# first lap is INJECTIVE (two distinct ticks less than a lap apart never
+# share a slot -- the no-clobber half of the correspondence).  Nat.divmod's
+# go-machine peels ticks from the FRONT with an accumulating state, which
+# makes the successor step invisible; the proofs go through a structural
+# twin (mm, in PROOF_router.bend) whose wrap-recursion exposes it, tied to
+# Nat.mod by one bridge (GO_STATE: the go-machine's remainder IS the
+# structural modulus).  After the bridge, everything is plain induction.
+# --------------------------------------------------------------------------
+
+# the remainder is inside the ring: every slot address names a real slot.
+# The numpy gloss: i % cap is a valid index into a cap-length buffer.
+law mod_bound:
+  for +n: Nat
+  for +cp: Nat
+  {Nat.is_le(Nat.mod(n, 1n+cp), cp) == True{} : Bool}
+
+# periodicity: one full lap later, the slot address repeats exactly.
+# The numpy gloss: (i + cap) % cap == i % cap -- the ring's whole point.
+law mod_period:
+  for +n: Nat
+  for +cp: Nat
+  {Nat.mod(Nat.add(n, 1n+cp), 1n+cp) == Nat.mod(n, 1n+cp) : Nat}
+
+# the positive instance, pinned: 9 mod 4 == 5 mod 4 == 1 (one lap apart).
+law mod_period_good:
+  {Nat.mod(Nat.add(5n, 4n), 4n) == Nat.mod(5n, 4n) : Nat}
+
+# THE one-lap injectivity: two distinct ticks less than a lap apart NEVER
+# share a slot -- a write at i+t (1 <= t < cap) cannot clobber slot
+# mod(i, cap).  This is the no-clobber half of the ring correspondence,
+# and it is exactly the fact an under-capacity ring violates (bad_cap):
+# there, ticks a horizon apart DO share a slot, and the delay aliasing
+# the csr comment warns about becomes real.
+law mod_inj_lap:
+  for +i: Nat
+  for +t: Nat
+  for +cp: Nat
+  for +h1: {Nat.is_le(1n, t) == True{} : Bool}
+  for +h2: {Nat.is_le(t, cp) == True{} : Bool}
+  {Nat.is_ne(Nat.mod(Nat.add(i, t), 1n+cp), Nat.mod(i, 1n+cp))
+     == True{} : Bool}
