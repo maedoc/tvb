@@ -1,5 +1,7 @@
 # Value-level verification of the routed averages — what Bend can and cannot do
 
+> **New here?** Start with [README.md](README.md) — the guided tour (goals, data structures, the high-level laws). This file is a deep dive.
+
 Scope note: the 159-law suite proves the ROUTING contract (which samples,
 in what order, how old, no aliasing, no double-writes) and deliberately
 says nothing about float VALUES — op-order is the kernel's contract and

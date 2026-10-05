@@ -1,5 +1,7 @@
 # Bend engine notes — operational gotchas and proof-system facts
 
+> **New here?** Start with [README.md](README.md) — the guided tour (goals, data structures, the high-level laws). This file is a deep dive.
+
 Durable notes for working on `bend_hybrid/` (the Bend Montbrio hybrid prototype).
 Written 2026-10-01 after the first end-to-end port. For the *design* and the
 *measurements*, see `README.md`; this file is the "how do I not get stuck"

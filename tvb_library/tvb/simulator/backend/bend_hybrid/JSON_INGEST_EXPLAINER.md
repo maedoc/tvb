@@ -1,5 +1,7 @@
 # JSON in, theorems intact — arbitrary runtime configs and the delay plateau
 
+> **New here?** Start with [README.md](README.md) — the guided tour (goals, data structures, the high-level laws). This file is a deep dive.
+
 *tvb-bend, the Bend router worktree. Companion to the router explainer; code in `tvb_library/tvb/simulator/backend/bend_hybrid/` (`json_ingest.bend`, `LAWS_json.bend`, `PROOF_json.bend`, `json_demo.bend`).*
 
 ## The question

@@ -1,5 +1,7 @@
 # History design: the tape is the spec, the ring is a proved compression
 
+> **New here?** Start with [README.md](README.md) — the guided tour (goals, data structures, the high-level laws). This file is a deep dive.
+
 Decision record, 2026-10-02, after the tier-1 closure (109 laws). Written
 before any history code exists; this file is the "why" behind the law
 statements that follow.

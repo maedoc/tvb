@@ -1,5 +1,7 @@
 # The Q1/Q2 law family — what the newest Bend laws prove, next to the numba they formalize
 
+> **New here?** Start with [README.md](README.md) — the guided tour (goals, data structures, the high-level laws). This file is a deep dive.
+
 *tvb-bend. Companion to the router and JSON-ingress explainers. Covers the six commits after `49f2f5688`: window_span (Q2), hold_until_due / left_invariant (Q1), delay_injective (the horizon rule), the `ok(cfg)=True` law family, and the `json_read_fresh` capstone. Code in `bend_hybrid/` (`router.bend`, `LAWS_router.bend`, `PROOF_router.bend`, `LAWS_json.bend`, `PROOF_json.bend`), engine side in `tvb_library/tvb/simulator/backend/templates/nb-hybrid-sim.py.mako` and `nb_hybrid.py`.*
 
 ## What landed, in one table

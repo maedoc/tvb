@@ -1,5 +1,7 @@
 # Bend ecosystem map (initial)
 
+> **New here?** Start with [README.md](README.md) — the guided tour (goals, data structures, the high-level laws). This file is a deep dive.
+
 *Recon 2026-10-02, source: [777genius/awesome-bend](https://github.com/777genius/awesome-bend) (list last checked 2026-10-01) plus READMEs of the highlighted repos. **README-level only — nothing cloned or executed.** Target: current Bend 2.0.x (we run 2.0.34). This is an initial map: domains are roughly right, coverage within a domain is not exhaustive, and nothing here is an endorsement until we have read the code.*
 
 ```mermaid

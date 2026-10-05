@@ -1,5 +1,7 @@
 # Writing Bend for TVB — a working guide
 
+> **New here?** Start with [README.md](README.md) — the guided tour (goals, data structures, the high-level laws). This file is a deep dive.
+
 Collected 2026-10-01 from the first end-to-end port (MontbrioPazoRoxin hybrid
 kernel with a delayed connectome and a sweep). Companion documents:
 

@@ -1,4 +1,299 @@
-# Bend MontbrioPazoRoxin hybrid prototype
+# The Bend hybrid law suite — a guided tour
+
+How the tvb hybrid simulator's **routing core** was re-cast as a proved
+object in [Bend](https://github.com/bendlang/bend) 2.0 — what the data
+structures are, what the laws say, and how to check them.
+
+> **What "proved" means here.** The suite proves the *routing* contract:
+> which samples a read touches, in what order, how stale they may be, and
+> where each computed value is written. Float *values* are deliberately
+> out of scope — operator order is pinned instead (rounding order is
+> observable in IEEE-754, so order *is* the numerical contract), and the
+> numba template remains the value reference. See
+> [VALUE_LEVEL_EXPLAINER.md](VALUE_LEVEL_EXPLAINER.md) for what could be
+> proved about values, at what cost.
+
+Status: **175 laws** in `LAWS_router.bend` (+5 in `LAWS_json.bend`, +13
+model-level in `LAWS.bend`), every one kernel-verified
+(`bend PROOF_router.bend --verdict`), with 17 negative controls that the
+checker must *reject*. Everything is quantified: the JSON ingress decodes
+**any** string (garbage included), so a claim over `String` is a claim
+over every document the binary will ever see at runtime.
+
+The contract itself, as three named capstones (section 8 of
+`LAWS_router.bend`):
+
+- **`routing_contract`** — in an accepted config, every routed line at
+  every tick is fresh, inside the history window, and well-ordered.
+- **`memory_contract`** — every law-bearing read through the engine's
+  ring delivers exactly the tape's sample (the ring is a proved
+  compression of the tape).
+- **`ingress_contract`** — for every JSON string that passes the
+  validator, every routed read at every tick is fresh: runtime input
+  cannot escape the routing contract.
+
+---
+
+## 1. The data structures
+
+| Type | Where | What it is |
+|---|---|---|
+| `Lane{k, left, newest}` | `router.bend` | one subnet's **schedule**: a carried countdown. `k` = period in master ticks, `left` = ticks to the next publication, `newest` = index of the newest published sample |
+| `Line{i0, i1, num, den, win}` | `router.bend` | one **routed read**: interpolation endpoints `i0 ≤ i1`, fraction `num/den`, averaging window `win` |
+| `Win{lo, hi}` | `router.bend` | the Q2 anti-alias **window** of a read: `route_window(n, d, w) = Win{n−(d+w), n−d}` |
+| `Proj{src, tgt, d, win, tc}` | `router.bend` | one coupling **edge**: read lane `src` at delay `d`, average `win` samples, write the result to node `tgt`, cvar slot `tc` |
+| `Config{lanes, projs, horizon}` | `router.bend` | the network: lane periods, projection list, history horizon |
+| `Csr{indptr, indices, delays}` | `router.bend` | the per-edge connectome (rows per target node) |
+| the **tape** | `hist.bend` | `List<&2, F32>` where element *i* **is** the sample at absolute tick *i*; reads past the end answer the IC fill — the semantic object of the history |
+| the **ring** | `hist.bend` / `coupling.bend` | the engine's slot-addressed compression: slot *s* holds the newest tick ≡ *s* (mod cap) |
+| `Write{w_tgt, w_tc, w_val}` | `coupling.bend` | one coupling write: the averaged value with its destination site |
+| `cs` | `coupling.bend` | the coupling state `c[node][cvar]`, a row-per-node list of F32 slots the `+=` accumulates into |
+
+```mermaid
+flowchart TD
+  J["json_ingest.bend -- runtime JSON into a Config, total on ALL strings"] --> R
+  R["router.bend -- Nat schedule, routing, validators"]
+  H["hist.bend -- the tape and the ring spec"]
+  K["kernel.bend -- F32 leaves, op-order pinned"]
+  C["coupling.bend -- the average range and write site"]
+  R --> C
+  H --> C
+  K --> C
+  LAWS["LAWS_router.bend and LAWS_json.bend -- the claims"] -.->|"proved by"| PROOF["PROOF_router.bend and PROOF_json.bend -- bend --verdict"]
+```
+
+Everything through `Line`/`Win` is **Nat**: the router is a pure
+index-level object and that is what makes it provable in Bend's
+term-equality world. The kernel (`kernel.bend`) is the only place F32
+appears, and only as opaque terms with pinned operator order.
+
+## 2. Walking the high-level laws
+
+The suite is a ladder: arithmetic and structural **bricks** at the
+bottom, and a handful of **capstones** at the top that a reader should
+actually care about. Here are the load-bearing ones, in the order the
+ladder climbs.
+
+### 2.1 The schedule — *how stale can a slow subnet's input be?* (Q1)
+
+- **`period_from_init`** — a period-`k` lane publishes **exactly once
+  per k master ticks**, from any IC offset. The publish rate, without
+  div/mod.
+- **`newest_at`** — at tick `t = q·k + r` the newest published sample is
+  exactly `n + q`: the publish count is *exact*, not just bounded.
+- **`stale_bound`** — the age of a lane's newest sample is the remainder
+  `r ≤ k−1`: a slow subnet's input is **never more than one period minus
+  one tick stale**. This is the Q1 answer, as a theorem.
+- **`hold_until_due`** — the zero-order hold: ticks before the due date
+  hold the newest sample; publications land exactly on due dates.
+- **`count_shared` / `monitor_zoh_average`** — the tavg monitors use ONE
+  master-tick counter and divide by the master span: a slow subnet's
+  average is the master-time average of its ZOH-held trajectory, not a
+  per-own-step one.
+
+Composed at the top level by **`tick_split`** / **`run_segmentable`**:
+`a+b` ticks = `a` then `b`, so the sweep loop may checkpoint anywhere.
+
+### 2.2 The read — *no read sees the future* 
+
+- **`read_fresh`** / **`read_fresh_ticks`** — every routed line's
+  freshest endpoint is at or behind the source lane's newest published
+  sample — at every tick, end-to-end (`ok(cfg)` not even needed).
+- **`clamp_necessary`** — the zero-delay clamp is *forced*: the
+  unguarded read asks for sample `n+1`, one past everything published.
+  The clamp is causality, not defensiveness.
+- **`degenerate_read`** / **`macro_degenerate`** — the golden rule of
+  the multi-rate work, as lemmas: at `k = 1` the multi-dt read **is** the
+  single-dt formula `i0 = t − d`, for both routing policies. The two
+  policies cannot drift apart on an all-`k=1` network.
+- **`line_ordered`** — `i0 ≤ i1` in every routed line: the kernel's
+  interpolation interval is never inverted.
+
+### 2.3 The window — *the anti-alias average* (Q2)
+
+`route_window(n, d, w) = Win{n−(d+w), n−d}`; the `w` samples are the
+ticks **(lo, hi]** — `lo+1 .. hi` inclusive (pinned by
+`win_cells_instance`).
+
+- **`window_span`** — the window covers **exactly `w` samples**
+  (`hi − lo = w`) whenever it fits the history.
+- **`window_ordered`** / **`window_head_age`** — the ends are ordered,
+  and the window's head is `d + w` ticks behind the stream head: the lag
+  is the price of the window, and it is forced (making the input fresher
+  means either reading past the window's start or shrinking it).
+
+### 2.4 No aliasing, no double writes
+
+- **`delay_injective` → `read_distinct` → `route_distinct`** — two
+  distinct in-horizon delays read **distinct** source samples, through
+  `route_read`, per projection pair. Outside the horizon everything
+  collapses onto the IC (that is the *delay plateau*, §2.7) — so
+  aliasing cannot happen silently.
+- **`ok_no_clash`** — in an accepted config, two projections writing the
+  same target carry **distinct coupling slots**: the order-dependent
+  observable (a float `+=`) has no ambiguity to resolve.
+- The **`ok(cfg)=True` family** — the validator's conjuncts are
+  invertible (`ok_lanes`, `ok_projs`, `ok_unique`, per-index forms):
+  everything downstream is proved *conditional on acceptance*, which is
+  what the binary actually enforces.
+
+### 2.5 Memory — the tape, the ring, and the correspondence
+
+The history has a two-level story ([HISTORY_DESIGN.md](HISTORY_DESIGN.md)):
+
+- **the tape is the spec** — `hist_read_snoc` (read-after-write),
+  `hist_snoc_stable` (appends never change older entries),
+  `hist_read_ic` (past-the-end is the IC fill), `hist_prune_shift`
+  (pruning reindexes survivors exactly). Anything satisfying these IS
+  the tape for the law layer.
+- **the ring is a proved compression** — `ring_first_lap` (below the
+  capacity the slot address IS the index), then
+  **`ring_correspondence`** / **`memory_contract`**: every law-bearing
+  read (inside `[n−horizon, n]`, and `horizon ≤ cap` by `ok_cap`) hits
+  the slot holding exactly the tape's sample. The write path
+  (`ring_write_read`, `ring_snoc_stable`) consumes the divmod family
+  (`mod_bound`, `mod_period`, `mod_inj_lap`): a write at tick `i+t`,
+  `1 ≤ t < cap`, cannot clobber tick `i`'s slot — the no-clobber fact an
+  under-capacity ring violates.
+
+### 2.6 The three contracts
+
+- **`routing_contract`** (§2.1–2.2 composed) — `ok(c)` ⇒ every line of
+  every tick is fresh ∧ in-window ∧ ordered.
+- **`memory_contract`** (§2.5 composed) — `ok(c)` ∧ `ok_cap(c, cap)` ⇒
+  the ring delivers the tape's leaf at every routed endpoint. *Honest
+  note:* the statement carries a tie hypothesis
+  (`hist_len(tape) = 1 + newest(source lane)`) — the tape must be the
+  history the lanes actually published, or the claim is false (a stale
+  tick has been overwritten one lap later). The capstone keeps the
+  conclusion and adds exactly this premise.
+- **`ingress_contract`** — restates `json_read_fresh` (§2.7) as the
+  third named member.
+
+### 2.7 Runtime JSON — *what survives the wire*
+
+The decoder is **total**: `json_decode : String → Config`, garbage maps
+to the default. So the laws quantify over all strings and hold for every
+runtime input by construction.
+
+- **`read_saturate` / `json_delay_plateau`** — asking for a delay past
+  the whole history returns the IC read, and **all** absurd delays
+  return the *same* line. The router saturates; it never wraps — the
+  precise difference from the engines' ring buffers.
+- **`json_read_fresh`** — for every string whose decoded config passes
+  `ok`, every routed read at every tick is fresh. Accepted input cannot
+  escape the routing contract.
+
+### 2.8 The average's routing — *range → average → site*
+
+The user-priority wiring (section 9, `coupling.bend`), closing the
+`mcore.bend` pipeline at the spec level:
+
+```mermaid
+flowchart LR
+  W["route_window gives Win lo hi"] --> CELLS["win_cells picks exactly w floats at lo+1 .. hi"]
+  CELLS --> AVG["f32_average folds them in pinned order"]
+  AVG --> SITE["cs_add accumulates at proj_tgt proj_tc -- c var j += avg"]
+  SITE --> OK["stable at every other site -- ok_no_clash keeps sites distinct"]
+```
+
+- **`win_cells_len` / `win_cells_nth`** — the float range fed to the
+  average has **exactly the window's length** and **exactly the window's
+  indices** (entry `i` is tape tick `lo+1+i`).
+- **`edge_cells_len` / `edge_cells_nth` / `edge_cells_span`** — the same
+  through the router: the range is positioned at the routed window of
+  the *source lane's* tape, and its length equals `win_hi − win_lo`.
+- **`w_tgt_site` / `w_tc_site` / `couple_enter`** — the averaged value
+  **enters the correct cvar (`proj_tc`) of the correct node/lane
+  (`proj_tgt`)** — and `cs_set_stable_row/col` say no other site is
+  touched. With `ok_no_clash`, one write per tick per site.
+
+### 2.9 The leaves — operator order is the contract
+
+`blend_order` (decision 1's pinned interpolation, term for term),
+`cfun_linear_order`, `gather_nil`/`gather_cons` (edges fold in config
+order), `f32_sum_cons`/`f32_average_def`. These are *definitional* laws:
+a future re-association — even a value-equal one — breaks them. In
+IEEE-754 that is exactly the numerical-fidelity contract wearing a
+structural costume.
+
+## 3. How the proofs work
+
+- **Everything is a law.** Bend has no lemma-in-a-proof, so the
+  arithmetic bricks (`sub_add_cancel`, `add_succ`, `mod_inj_lap`, …) are
+  laws too. The suite is a ladder: capstones are proved by
+  *instantiating* bricks, and a missing fact becomes a new small law.
+- **Structural deciders.** `le_ok`/`lt_ok` are `Type`-valued (Unit /
+  Empty / recursive) so inductions can destructure them; the Bool forms
+  stay as bridge laws (`le_ok_iff`).
+- **Equal plumbing.** Goals chain through `Equal.cong`/`Equal.sym`/
+  `Equal.trans`; `Bool.fne` refutes `False == True` hypotheses that arise
+  when a decider computes.
+- **Instance laws pin readings.** Where comments disagree (e.g. the
+  window's inclusivity), a literal instance (`win_cells_instance`,
+  `csr_row_good_0`, `ring_of_good_4`) pins the intended reading.
+- **Negative controls.** `bad/` holds 17 malformed claims (double
+  writes, over-horizon delays, wrong counts, regrouped blends, …) that
+  the checker must *reject*. A suite that cannot fail is not a suite.
+- **Toolchain traps** live in [NOTES.md](NOTES.md) — read it before
+  editing (no forward refs, `1n+(+p)` for unrestricted pattern binders,
+  the decreasing argument must come first, …).
+
+## 4. Running the gates
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"     # lean, for --verdict
+cd tvb_library/tvb/simulator/backend/bend_hybrid
+bash tests/run_router.sh                 # 175 laws + 17 negatives + pinned tests
+bash tests/run_json.sh                   # ingress laws + compiled-binary JSON runs
+```
+
+The bend binary is `/home/duke/.bend/bin/bend` (v2.0.34). Both gates end
+in `all green`; `--verdict` re-checks the proofs with the Lean-proved
+kernel (the checker/kernel trust story: see `ECOSYSTEM.md` — keep
+`--verdict`, never introduce `~` template params in proof files).
+
+## 5. Files and further reading
+
+| file | role |
+|---|---|
+| `router.bend` | the Nat-level router: lanes, lines, windows, validators, CSR |
+| `hist.bend` | the tape (spec) and the ring (proved compression) |
+| `kernel.bend` | the F32 leaves: blend, cfun, gather, the window average |
+| `coupling.bend` | the average's range (`win_cells`/`edge_cells`) and write site (`Write`, `cs`) |
+| `json_ingest.bend` | the total JSON decoder (explicit state machine) |
+| `LAWS_router.bend` / `PROOF_router.bend` | the 175 claims and their proofs |
+| `LAWS_json.bend` / `PROOF_json.bend` | the ingress claims and proofs |
+| `bad/` | negative controls — must be rejected |
+| `tests/` | the gates |
+
+Deep dives, roughly in reading order:
+
+1. [ROUTER_EXPLAINER.md](ROUTER_EXPLAINER.md) — the big picture: a brain
+   simulator without proving floats; policies as schedules.
+2. [Q1Q2_LAWS_EXPLAINER.md](Q1Q2_LAWS_EXPLAINER.md) — the Q1/Q2 law
+   families interleaved with the numba engine they formalize.
+3. [HISTORY_DESIGN.md](HISTORY_DESIGN.md) — the tape/ring decision
+   record.
+4. [JSON_INGEST_EXPLAINER.md](JSON_INGEST_EXPLAINER.md) — runtime
+   configs and the delay plateau.
+5. [VALUE_LEVEL_EXPLAINER.md](VALUE_LEVEL_EXPLAINER.md) — what Bend can
+   and cannot do about float *values* (the tiered answer).
+6. [ECOSYSTEM.md](ECOSYSTEM.md) — Bend tooling recon and the hardening
+   results (bendcheck fuzz, verdict trust).
+7. [NOTES.md](NOTES.md) — operational gotchas and proof-system facts.
+8. [BEND_TVB_GUIDE.md](BEND_TVB_GUIDE.md) — writing Bend for TVB work.
+
+Python mirrors: `compare_window_hold.py` (the window/hold laws checked
+against an independent Python transcription), `compare_monitor.py`.
+
+---
+
+## Part II — the engine prototype (preserved from the original README)
+
+*The `mcore.bend`/`mengine.bend`/`montbrio_sweep.bend` prototype this law suite grew around — measured results, idioms, recorded bugs, and limits. Preserved verbatim (headings demoted one level).*
+
+## Bend MontbrioPazoRoxin hybrid prototype
 
 A minimal, idiomatic Bend port of the numba hybrid kernel
 (`tvb/simulator/backend/nb_hybrid.py`) for one subnet, one mode, MontbrioPazoRoxin,
@@ -33,14 +328,14 @@ $BEND PROOF.bend --verdict                          # ALL PROOFS CHECK
 
 ---
 
-## 1. Measured results
+### 1. Measured results
 
 Machine: 8 cores, no CUDA. `tvb_library/.venv` (numba 0.68, numpy 2.5).
 Workload: `N=300` nodes, dense off-diagonal connectome (89 700 directed edges),
 per-edge delays `0..10` steps, ring of 16 slots, 300 steps, 8 sweep points over
 `coupling_scale ∈ [0, 5]`.
 
-### Numerics
+#### Numerics
 
 | check | result |
 |---|---|
@@ -59,7 +354,7 @@ delayed gather at all, so the **coupled** row is the one that means anything.
 `r` is otherwise within 1e-5 and `V` within 6e-07 of the reference; both gaps
 are the float64-intermediate term of §3.
 
-### Speed
+#### Speed
 
 | | 8-point sweep | per point |
 |---|---|---|
@@ -78,7 +373,7 @@ one at a time. Both sides pay per-point array/buffer setup.
 
 ---
 
-## 2. Bend 2.0 idioms the design depends on
+### 2. Bend 2.0 idioms the design depends on
 
 Every item here was established by running the compiler; the ones that cost the
 most time are the ones that differ from what you would write in any other
@@ -145,7 +440,7 @@ numerically by `compare_montbrio.py` instead.
 
 ---
 
-## 3. Where the numbers can diverge from numba, and how they are pinned
+### 3. Where the numbers can diverge from numba, and how they are pinned
 
 The drift is a **literal transcription** of the model's expression strings in
 `models/infinite_theta.py`:
@@ -191,7 +486,7 @@ Remaining, deliberate sources of divergence:
 
 ---
 
-## 4. Three bugs worth recording
+### 4. Three bugs worth recording
 
 They are the reason the delay handling works at all, and each was found by a
 measurement rather than by reading the code.
@@ -216,7 +511,7 @@ push slot (`t`) — so from step 2 on both were off by one.
 
 ---
 
-## 5. Runtime shape: why a binary and not a Python extension
+### 5. Runtime shape: why a binary and not a Python extension
 
 Bend 2.0 emits a native binary, C, JS, `.mjs` or BendTT. There is no Python
 target and no way to call a Bend def from Python:
@@ -240,7 +535,7 @@ exactly one consumer, for the same single-owner reason.
 
 ---
 
-## 6. What this prototype does NOT cover
+### 6. What this prototype does NOT cover
 
 Stated explicitly, because every item is a real difference from
 `nb_hybrid`/`cpp_hybrid` and none of them is a rounding detail.
