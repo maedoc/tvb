@@ -26,6 +26,7 @@ import Base
 import ./router.bend as R
 import ./kernel.bend as K
 import ./hist.bend as H
+import ./coupling.bend as C
 import ./json_ingest.bend as J
 
 # --------------------------------------------------------------------------
@@ -2016,3 +2017,196 @@ law ingress_contract:
   for +h: {R.ok(J.json_decode(s)) == True{} : Bool}
   {J.bumps_fresh(J.lanes_run(m, R.init_lanes(R.cfg_lanes(J.json_decode(s)))),
                  R.cfg_projs(J.json_decode(s)), 0n) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# 9. THE COUPLING ROUTING (Link 5): the average's range and write site
+# --------------------------------------------------------------------------
+# The routing claim that closes the mcore.bend pipeline at the spec
+# level: the RANGE of floats that goes into f32_average matches the
+# routed window -- its length AND its exact indices -- and the
+# resulting value ENTERS the correct cvar of the correct node/lane and
+# no other site.  coupling.bend provides the spec objects (win_cells /
+# edge_cells the range, Write / edge_write the addressing, the cs state
+# the c[var][j] plane); these laws pin the wiring.  Window reading: the
+# (lo, hi] convention -- win_cells picks ticks lo+1 .. lo+w -- pinned
+# by win_cells_instance.
+
+# 9a. the range: exactly w cells, at exactly the routed indices
+
+# the range has EXACTLY w entries -- it matches the window length --
+# for any tape (short histories pad with the IC fill, never shrink)
+law win_cells_len:
+  for +tape: List<&2, F32>
+  for +lo: Nat
+  for +w: Nat
+  for +ic: F32
+  {H.hist_len(C.win_cells(tape, lo, w, ic)) == w : Nat}
+
+# THE exact-indices law: entry i of the range is the tape's tick
+# lo+1+i -- the floats going into the average are exactly the window's
+# ticks, no off-by-one possible
+law win_cells_nth:
+  for +tape: List<&2, F32>
+  for +lo: Nat
+  for +w: Nat
+  for +ic: F32
+  for i: Nat
+  for h: R.lt_ok(i, w)
+  {H.hist_read(C.win_cells(tape, lo, w, ic), i, ic)
+     == H.hist_read(tape, Nat.add(1n, Nat.add(lo, i)), ic) : F32}
+
+# the (lo, hi] reading, pinned: lo=1, w=2 picks ticks 2 and 3 -- the
+# window_instance companion (Win{5, 8} at w=3 means ticks 6, 7, 8)
+law win_cells_instance:
+  {C.win_cells(1.0 <> 2.0 <> 3.0 <> 4.0 <> Nil{}, 1n, 2n, 0.0)
+    == 3.0 <> 4.0 <> Nil{} : List<&2, F32>}
+
+# 9b. the average leaf's order pins (op-order doctrine, like gather)
+
+law f32_sum_nil:
+  for +acc: F32
+  {K.f32_sum(Nil{}, acc) == acc : F32}
+
+law f32_sum_cons:
+  for +h: F32
+  for +t: List<&2, F32>
+  for +acc: F32
+  {K.f32_sum(h <> t, acc) == K.f32_sum(t, F32.add(acc, h)) : F32}
+
+law f32_average_def:
+  for +vals: List<&2, F32>
+  for +den: F32
+  for +acc: F32
+  {K.f32_average(vals, den, acc) == F32.div(K.f32_sum(vals, acc), den) : F32}
+
+# 9c. the ROUTED range: edge_cells is the window of the source lane
+
+# the routed range's length is the projection's window -- unconditionally
+law edge_cells_len:
+  for +ls: List<&2, R.Lane>
+  for +p: R.Proj
+  for +tape: List<&2, F32>
+  for +ic: F32
+  {H.hist_len(C.edge_cells(ls, p, tape, ic)) == R.proj_win(p) : Nat}
+
+# the routed range's entry i is the source tape at the routed index --
+# win_cells_nth composed with route_window's positioning at the source
+# lane's newest (start-index law of the average's input)
+law edge_cells_nth:
+  for +ls: List<&2, R.Lane>
+  for +p: R.Proj
+  for +tape: List<&2, F32>
+  for +ic: F32
+  for i: Nat
+  for h: R.lt_ok(i, R.proj_win(p))
+  {H.hist_read(C.edge_cells(ls, p, tape, ic), i, ic)
+     == H.hist_read(tape,
+          Nat.add(1n,
+            Nat.add(R.win_lo(R.route_window(
+                        R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                        R.proj_d(p), R.proj_win(p))), i)),
+          ic) : F32}
+
+# the range MATCHES the window record: its length is win_hi - win_lo
+# (== proj_win(p) by window_span whenever the window fits) -- the
+# "range of floats going into f32_average matches the window length"
+law edge_cells_span:
+  for +ls: List<&2, R.Lane>
+  for +p: R.Proj
+  for +tape: List<&2, F32>
+  for +ic: F32
+  for h: R.le_ok(Nat.add(R.proj_d(p), R.proj_win(p)),
+                R.lane_newest(R.nth_lane(ls, R.proj_src(p))))
+  {H.hist_len(C.edge_cells(ls, p, tape, ic))
+     == Nat.sub(R.win_hi(R.route_window(
+                   R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                   R.proj_d(p), R.proj_win(p))),
+                R.win_lo(R.route_window(
+                   R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                   R.proj_d(p), R.proj_win(p)))) : Nat}
+
+# 9d. the SITE: the result enters (tgt, tc) -- the correct cvar of the
+# correct node/lane -- and no other site
+
+law w_tgt_site:
+  for +ls: List<&2, R.Lane>
+  for +p: R.Proj
+  for +tape: List<&2, F32>
+  for +ic: F32
+  for +den: F32
+  for +acc: F32
+  {C.w_tgt(C.edge_write(ls, p, tape, ic, den, acc)) == R.proj_tgt(p) : Nat}
+
+law w_tc_site:
+  for +ls: List<&2, R.Lane>
+  for +p: R.Proj
+  for +tape: List<&2, F32>
+  for +ic: F32
+  for +den: F32
+  for +acc: F32
+  {C.w_tc(C.edge_write(ls, p, tape, ic, den, acc)) == R.proj_tc(p) : Nat}
+
+# write-read at the site: the written value IS what the site answers
+law cs_set_read:
+  for +cs: List<&2, List<&2, F32>>
+  for +tgt: Nat
+  for +tc: Nat
+  for +v: F32
+  for +zero: F32
+  {C.cs_get(C.cs_set(cs, tgt, tc, v, zero), tgt, tc, zero) == v : F32}
+
+# write-stability across rows: a write at tgt leaves tgt2's row alone
+law cs_set_stable_row:
+  for +cs: List<&2, List<&2, F32>>
+  for +tgt: Nat
+  for +tgt2: Nat
+  for +tc: Nat
+  for +v: F32
+  for +zero: F32
+  for +hn: {Nat.is_ne(tgt, tgt2) == True{} : Bool}
+  {C.cs_get(C.cs_set(cs, tgt, tc, v, zero), tgt2, tc, zero)
+     == C.cs_get(cs, tgt2, tc, zero) : F32}
+
+# ... and within a row: a write at tc leaves tc2's slot alone
+law cs_set_stable_col:
+  for +cs: List<&2, List<&2, F32>>
+  for +tgt: Nat
+  for +tc: Nat
+  for +tc2: Nat
+  for +v: F32
+  for +zero: F32
+  for +hn: {Nat.is_ne(tc, tc2) == True{} : Bool}
+  {C.cs_get(C.cs_set(cs, tgt, tc, v, zero), tgt, tc2, zero)
+     == C.cs_get(cs, tgt, tc2, zero) : F32}
+
+# the "+=" reads back accumulated: the site answers old + v
+law cs_add_read:
+  for +cs: List<&2, List<&2, F32>>
+  for +tgt: Nat
+  for +tc: Nat
+  for +v: F32
+  for +zero: F32
+  {C.cs_get(C.cs_add(cs, tgt, tc, v, zero), tgt, tc, zero)
+     == F32.add(C.cs_get(cs, tgt, tc, zero), v) : F32}
+
+# THE capstone -- the routing claim in one law: the average of
+# projection p's ROUTED WINDOW (edge_cells: exactly the window's
+# floats) ENTERS the correct cvar (proj_tc) of the correct node/lane
+# (proj_tgt -- a REAL lane under ok by proj_tgt_bounded) and
+# accumulates there.  With win_cells_nth/edge_cells_nth (the range) and
+# cs_set_stable_* (no other site), the mcore.bend pipeline is closed at
+# the spec level: c[var][j] += average(window) at (tgt, tc), end to end.
+law couple_enter:
+  for +ls: List<&2, R.Lane>
+  for +p: R.Proj
+  for +tape: List<&2, F32>
+  for +ic: F32
+  for +den: F32
+  for +acc: F32
+  for +zero: F32
+  for +cs: List<&2, List<&2, F32>>
+  {C.cs_get(C.cs_add(cs, R.proj_tgt(p), R.proj_tc(p),
+                     K.f32_average(C.edge_cells(ls, p, tape, ic), den, acc), zero),
+            R.proj_tgt(p), R.proj_tc(p), zero)
+     == F32.add(C.cs_get(cs, R.proj_tgt(p), R.proj_tc(p), zero),
+                K.f32_average(C.edge_cells(ls, p, tape, ic), den, acc)) : F32}

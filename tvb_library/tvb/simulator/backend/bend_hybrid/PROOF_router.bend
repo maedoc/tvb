@@ -14,6 +14,7 @@ import ./LAWS_router.bend as Laws
 import ./router.bend as R
 import ./kernel.bend as K
 import ./hist.bend as H
+import ./coupling.bend as C
 import ./json_ingest.bend as J
 
 # False is not True: the motive sends True to Empty, so transporting along a
@@ -4130,3 +4131,234 @@ def Laws.memory_contract(c, cap, tape, ic, ls, ps, t, i, h, hcap, hls, hps, hb,
   Laws.ring_correspondence(tape, cap, ic,
                            R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
                            hj, hw)
+
+# --------------------------------------------------------------------------
+# 9. the coupling routing: the average's range and write site
+# --------------------------------------------------------------------------
+# win_cells_len: induction on w; the cons step is the IH under one
+# successor (Equal.cong on z => 1n+z).
+def win_cells_len_go(+w: Nat, +tape: List<&2, F32>, +lo: Nat, +ic: F32)
+    -> {H.hist_len(C.win_cells(tape, lo, w, ic)) == w : Nat}:
+  match w:
+    case 0n:
+      {==}
+    case 1n+(+s):
+      Equal.cong(Nat, Nat, z => 1n+z,
+                 H.hist_len(C.win_cells(tape, 1n+lo, s, ic)), s,
+                 win_cells_len_go(s, tape, 1n+lo, ic))
+
+def Laws.win_cells_len(tape, lo, w, ic):
+  win_cells_len_go(w, tape, lo, ic)
+
+# win_cells_nth: induction on (w, i) with the lt_ok witness; w=0 is
+# absurd (lt_ok_nil_absurd), the step needs add_succ to line the shifted
+# index up (Equal.cong over the hist_read, trans to close).
+def win_cells_nth_go(+w: Nat, i: Nat, h: R.lt_ok(i, w),
+                     +tape: List<&2, F32>, +lo: Nat, +ic: F32)
+    -> {H.hist_read(C.win_cells(tape, lo, w, ic), i, ic)
+          == H.hist_read(tape, Nat.add(1n, Nat.add(lo, i)), ic) : F32}:
+  match w i h:
+    case 0n _ h:
+      Empty.absurd({H.hist_read(C.win_cells(tape, lo, 0n, ic), i, ic)
+                      == H.hist_read(tape, Nat.add(1n, Nat.add(lo, i)), ic) : F32},
+                   lt_ok_nil_absurd(i, h))
+    case 1n+(+s) 0n _:
+      Equal.sym(F32,
+        H.hist_read(tape, Nat.add(1n, Nat.add(lo, 0n)), ic),
+        H.hist_read(tape, Nat.add(1n, lo), ic),
+        Equal.cong(Nat, F32,
+          z => H.hist_read(tape, Nat.add(1n, z), ic),
+          Nat.add(lo, 0n), lo, Laws.add_zero(lo)))
+    case 1n+(+s) 1n+(+q) h:
+      Equal.trans(F32,
+        H.hist_read(C.win_cells(tape, 1n+lo, s, ic), q, ic),
+        H.hist_read(tape, Nat.add(1n, Nat.add(1n+lo, q)), ic),
+        H.hist_read(tape, Nat.add(1n, Nat.add(lo, 1n+q)), ic),
+        win_cells_nth_go(s, q, h, tape, 1n+lo, ic),
+        Equal.sym(F32,
+          H.hist_read(tape, Nat.add(1n, Nat.add(lo, 1n+q)), ic),
+          H.hist_read(tape, Nat.add(1n, Nat.add(1n+lo, q)), ic),
+          Equal.cong(Nat, F32,
+            z => H.hist_read(tape, Nat.add(1n, z), ic),
+            Nat.add(lo, 1n+q),
+            Nat.add(1n+lo, q),
+            Laws.add_succ(lo, q))))
+
+def Laws.win_cells_nth(tape, lo, w, ic, i, h):
+  win_cells_nth_go(w, i, h, tape, lo, ic)
+
+def Laws.win_cells_instance():
+  {==}
+
+# the average leaf's order pins -- definitional (op-order doctrine)
+def Laws.f32_sum_nil(acc):
+  {==}
+
+def Laws.f32_sum_cons(h, t, acc):
+  {==}
+
+def Laws.f32_average_def(vals, den, acc):
+  {==}
+
+# edge_cells_len/nth: the routed range is win_cells at route_window's lo
+# -- instantiating the two range laws at the routed position.
+def Laws.edge_cells_len(ls, p, tape, ic):
+  Laws.win_cells_len(tape,
+    R.win_lo(R.route_window(R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                            R.proj_d(p), R.proj_win(p))),
+    R.proj_win(p), ic)
+
+def Laws.edge_cells_nth(ls, p, tape, ic, i, h):
+  Laws.win_cells_nth(tape,
+    R.win_lo(R.route_window(R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                            R.proj_d(p), R.proj_win(p))),
+    R.proj_win(p), ic, i, h)
+
+# edge_cells_span: edge_cells_len (len == w) chained with the SYM of
+# window_span (w == hi - lo) -- the range matches the window record.
+def Laws.edge_cells_span(ls, p, tape, ic, h):
+  Equal.trans(Nat,
+    H.hist_len(C.edge_cells(ls, p, tape, ic)),
+    R.proj_win(p),
+    Nat.sub(R.win_hi(R.route_window(R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                                    R.proj_d(p), R.proj_win(p))),
+            R.win_lo(R.route_window(R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                                    R.proj_d(p), R.proj_win(p)))),
+    Laws.edge_cells_len(ls, p, tape, ic),
+    Equal.sym(Nat,
+      Nat.sub(R.win_hi(R.route_window(R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                                      R.proj_d(p), R.proj_win(p))),
+              R.win_lo(R.route_window(R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                                      R.proj_d(p), R.proj_win(p)))),
+      R.proj_win(p),
+      Laws.window_span(R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                       R.proj_d(p), R.proj_win(p), h)))
+
+# the site laws are definitional (edge_write addresses (tgt, tc))
+def Laws.w_tgt_site(ls, p, tape, ic, den, acc):
+  {==}
+
+def Laws.w_tc_site(ls, p, tape, ic, den, acc):
+  {==}
+
+# cs_set_read_row: write-read at the row level -- the zero-filling
+# extension makes the write LAND at its slot even past the end.
+def cs_set_read_row(r: List<&2, F32>, s: Nat, +u: F32, +zero: F32)
+    -> {C.cs_get_row(C.cs_set_row(r, s, u, zero), s, zero) == u : F32}:
+  match r s:
+    case Nil{} 0n:
+      {==}
+    case Nil{} 1n+p:
+      cs_set_read_row(Nil{}, p, u, zero)
+    case h <> t 0n:
+      {==}
+    case h <> t 1n+p:
+      cs_set_read_row(t, p, u, zero)
+
+# cs_row_set: writing a site then projecting its row IS writing the
+# projected row -- the row projection commutes with the site write.
+def cs_row_set(cs: List<&2, List<&2, F32>>, tgt: Nat, s: Nat,
+               +u: F32, +zero: F32)
+    -> {C.cs_row(C.cs_set(cs, tgt, s, u, zero), tgt)
+          == C.cs_set_row(C.cs_row(cs, tgt), s, u, zero) : List<&2, F32>}:
+  match cs tgt:
+    case Nil{} 0n:
+      {==}
+    case Nil{} 1n+p:
+      cs_row_set(Nil{}, p, s, u, zero)
+    case h <> t 0n:
+      {==}
+    case h <> t 1n+p:
+      cs_row_set(t, p, s, u, zero)
+
+def Laws.cs_set_read(cs, tgt, tc, v, zero):
+  Equal.trans(F32,
+    C.cs_get_row(C.cs_row(C.cs_set(cs, tgt, tc, v, zero), tgt), tc, zero),
+    C.cs_get_row(C.cs_set_row(C.cs_row(cs, tgt), tc, v, zero), tc, zero),
+    v,
+    Equal.cong(List<&2, F32>, F32,
+      row => C.cs_get_row(row, tc, zero),
+      C.cs_row(C.cs_set(cs, tgt, tc, v, zero), tgt),
+      C.cs_set_row(C.cs_row(cs, tgt), tc, v, zero),
+      cs_row_set(cs, tgt, tc, v, zero)),
+    cs_set_read_row(C.cs_row(cs, tgt), tc, v, zero))
+
+# cs_row_stable: a write at tgt leaves tgt2 != tgt's row alone -- the
+# equal-arm cases refute via Bool.fne on the is_ne decider computing
+# False (the ring_write_stable pattern).
+def cs_row_stable(cs: List<&2, List<&2, F32>>, tgt: Nat, tgt2: Nat, s: Nat,
+                  +u: F32, +zero: F32,
+                  +hn: {Nat.is_ne(tgt, tgt2) == True{} : Bool})
+    -> {C.cs_row(C.cs_set(cs, tgt, s, u, zero), tgt2)
+          == C.cs_row(cs, tgt2) : List<&2, F32>}:
+  match cs tgt tgt2:
+    case Nil{} 0n 0n:
+      Bool.fne({C.cs_row(C.cs_set(Nil{}, 0n, s, u, zero), 0n)
+                  == C.cs_row(Nil{}, 0n) : List<&2, F32>}, hn)
+    case Nil{} 0n 1n+q:
+      {==}
+    case Nil{} 1n+p 0n:
+      {==}
+    case Nil{} 1n+p 1n+q:
+      cs_row_stable(Nil{}, p, q, s, u, zero, hn)
+    case h <> t 0n 0n:
+      Bool.fne({C.cs_row(C.cs_set(h <> t, 0n, s, u, zero), 0n)
+                  == C.cs_row(h <> t, 0n) : List<&2, F32>}, hn)
+    case h <> t 0n 1n+q:
+      {==}
+    case h <> t 1n+p 0n:
+      {==}
+    case h <> t 1n+p 1n+q:
+      cs_row_stable(t, p, q, s, u, zero, hn)
+
+# cs_get_row_stable: same at the row level, distinct slots
+def cs_get_row_stable(r: List<&2, F32>, s: Nat, s2: Nat,
+                      +u: F32, +zero: F32,
+                      +hn: {Nat.is_ne(s, s2) == True{} : Bool})
+    -> {C.cs_get_row(C.cs_set_row(r, s, u, zero), s2, zero)
+          == C.cs_get_row(r, s2, zero) : F32}:
+  match r s s2:
+    case Nil{} 0n 0n:
+      Bool.fne({C.cs_get_row(C.cs_set_row(Nil{}, 0n, u, zero), 0n, zero)
+                  == C.cs_get_row(Nil{}, 0n, zero) : F32}, hn)
+    case Nil{} 0n 1n+q:
+      {==}
+    case Nil{} 1n+p 0n:
+      {==}
+    case Nil{} 1n+p 1n+q:
+      cs_get_row_stable(Nil{}, p, q, u, zero, hn)
+    case h <> t 0n 0n:
+      Bool.fne({C.cs_get_row(C.cs_set_row(h <> t, 0n, u, zero), 0n, zero)
+                  == C.cs_get_row(h <> t, 0n, zero) : F32}, hn)
+    case h <> t 0n 1n+q:
+      {==}
+    case h <> t 1n+p 0n:
+      {==}
+    case h <> t 1n+p 1n+q:
+      cs_get_row_stable(t, p, q, u, zero, hn)
+
+def Laws.cs_set_stable_row(cs, tgt, tgt2, tc, v, zero, hn):
+  Equal.cong(List<&2, F32>, F32, row => C.cs_get_row(row, tc, zero),
+             C.cs_row(C.cs_set(cs, tgt, tc, v, zero), tgt2),
+             C.cs_row(cs, tgt2),
+             cs_row_stable(cs, tgt, tgt2, tc, v, zero, hn))
+
+def Laws.cs_set_stable_col(cs, tgt, tc, tc2, v, zero, hn):
+  Equal.trans(F32,
+    C.cs_get_row(C.cs_row(C.cs_set(cs, tgt, tc, v, zero), tgt), tc2, zero),
+    C.cs_get_row(C.cs_set_row(C.cs_row(cs, tgt), tc, v, zero), tc2, zero),
+    C.cs_get_row(C.cs_row(cs, tgt), tc2, zero),
+    Equal.cong(List<&2, F32>, F32, row => C.cs_get_row(row, tc2, zero),
+               C.cs_row(C.cs_set(cs, tgt, tc, v, zero), tgt),
+               C.cs_set_row(C.cs_row(cs, tgt), tc, v, zero),
+               cs_row_set(cs, tgt, tc, v, zero)),
+    cs_get_row_stable(C.cs_row(cs, tgt), tc, tc2, v, zero, hn))
+
+# cs_add_read and the capstone are cs_set_read instantiated at the
+# accumulate value -- the "+=" and the couple_enter site.
+def Laws.cs_add_read(cs, tgt, tc, v, zero):
+  Laws.cs_set_read(cs, tgt, tc, F32.add(C.cs_get(cs, tgt, tc, zero), v), zero)
+
+def Laws.couple_enter(ls, p, tape, ic, den, acc, zero, cs):
+  Laws.cs_add_read(cs, R.proj_tgt(p), R.proj_tc(p),
+                   K.f32_average(C.edge_cells(ls, p, tape, ic), den, acc), zero)

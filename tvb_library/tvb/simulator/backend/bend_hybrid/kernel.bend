@@ -55,3 +55,18 @@ def gather(edges: List<&2, Edge>, +acc: F32) -> F32:
       acc
     case +h <> t:
       gather(t, F32.add(acc, F32.mul(edge_w(h), edge_val(h))))
+
+# the window average (the Q2 anti-alias leaf): a plain sum/divide with
+# the SAME accumulator contract as gather (the caller supplies the zero).
+# The fold shape IS the fidelity contract: entries accumulate oldest-first
+# (the window's ascending tick order -- win_cells delivers them so), no
+# re-association; the divisor is the caller's (the engine's count).
+def f32_sum(vals: List<&2, F32>, +acc: F32) -> F32:
+  match vals:
+    case Nil{}:
+      acc
+    case +h <> t:
+      f32_sum(t, F32.add(acc, h))
+
+def f32_average(vals: List<&2, F32>, +den: F32, +acc: F32) -> F32:
+  F32.div(f32_sum(vals, acc), den)
