@@ -12,7 +12,7 @@ BEND="${BEND:-$HOME/.bend/bin/bend}"
 export PATH="$HOME/.local/bin:$PATH"   # lean, for --verdict
 fail=0
 
-gate=$("$BEND" PROOF_json.bend --verdict 2>&1 | tail -1)
+gate=$("$BEND" PROOF_json.bend --verdict 2>&1 | grep -v 'bend 2' | tail -1)
 if [ "$gate" = "ALL PROOFS CHECK" ]; then
   echo "ok   PROOF_json.bend --verdict"
 else

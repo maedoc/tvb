@@ -1622,3 +1622,118 @@ law mod_inj_lap:
   for +h2: {Nat.is_le(t, cp) == True{} : Bool}
   {Nat.is_ne(Nat.mod(Nat.add(i, t), 1n+cp), Nat.mod(i, 1n+cp))
      == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# 8. THE CONTRACT: the three named capstones (statements; proofs = Phase 2)
+# --------------------------------------------------------------------------
+# The three contracts the proving phases owe, WRITTEN AND PINNED but
+# deliberately COMMENTED OUT -- none is a claim the current file checks,
+# because one names functions that do not exist yet (memory_contract's
+# Phase-1 ring write path) and one needs an import this file does not
+# carry (ingress_contract's json_ingest).  Uncommenting is Phase 2's
+# first move, one law at a time, each with its proof def in
+# PROOF_router.bend.  Nothing here deletes or weakens any law above: the
+# three statements are compositions of already-proved bricks, and their
+# role is to pin the SCOPE of the proving phases before any proof is
+# written -- the shape of the goal is the contract, and the bricks are
+# already on the shelf.
+
+# THE ROUTING CONTRACT.  For every ACCEPTED config, every tick count t,
+# every in-bounds projection index i, the routed line of projection i is
+#   (a) FRESH: l_i1 <= its source lane's newest sample -- no read sees
+#       the future (read_fresh_ticks, the tick-invariant end-to-end law);
+#   (b) IN-WINDOW: l_i0 >= newest - horizon -- no read falls off the far
+#       end of the history (read_window_lo plus the ok-projection
+#       conjuncts -- ok_proj_shape_nth, ok_fits_nth -- lifted to tick
+#       state, so the per-projection shape facts hold of the config's
+#       OWN projection list at every tick);
+#   (c) ORDERED: l_i0 <= l_i1 -- the interpolation interval is never
+#       inverted (line_ordered).
+# The lanes/projections are tied to the config by equality hypotheses
+# (ls == init_lanes(cfg_lanes(c)), ps == cfg_projs(c)) so the tick
+# expressions stay short and the claim is exactly about the state a
+# caller would run: the config's own lanes, its own projections.  Phase
+# 2 proves this by INSTANTIATING existing laws (read_fresh_ticks,
+# read_window_lo and line_ordered are already proved); bricks are added
+# only where an induction is missing -- the expected gap is the
+# window-lo lift from one route_read to the whole-tick state.  At proof
+# time the single law may be split into three lemmas (fresh, in-window,
+# ordered) plus a conjunction capstone, as the proof file prefers.
+# law routing_contract:
+#   for +c: R.Config
+#   for +ls: List<&2, R.Lane>
+#   for +ps: List<&2, R.Proj>
+#   for t: Nat
+#   for i: Nat
+#   for +h: {R.ok(c) == True{} : Bool}
+#   for +hls: {ls == R.init_lanes(R.cfg_lanes(c)) : List<&2, R.Lane>}
+#   for +hps: {ps == R.cfg_projs(c) : List<&2, R.Proj>}
+#   for hb: R.lt_ok(i, R.projs_len(ps))
+#   {Bool.and(Nat.is_le(R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+#                       R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+#                                                 R.proj_src(R.nth_proj(ps, i))))),
+#       Bool.and(Nat.is_le(Nat.sub(R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+#                                                          R.proj_src(R.nth_proj(ps, i)))),
+#                                   R.cfg_horizon(c)),
+#                          R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i))),
+#                Nat.is_le(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+#                          R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)))))
+#    == True{} : Bool}
+
+# THE MEMORY CONTRACT (section 7's promised composed capstone).  For
+# every ACCEPTED config c with R.ok_cap(c, cap) == True, over a tape,
+# every law-bearing routed read's RING SLOT delivers the tape's leaf:
+# the engine's ring holds, at slot s, the sample of the NEWEST tick
+# congruent to s mod cap, and law-bearing reads lie in
+# [newest - horizon, newest] with horizon <= cap (read_window_lo +
+# read_fresh + ok_cap) -- i.e. inside the live window, where the slot
+# delivers exactly the tape's sample.  The bricks: the divmod family
+# (mod_lt, mod_period, mod_inj_lap) plus Phase 1's WRITE laws.  Note
+# which side is which: ring_read as it exists TODAY is the mod-addressed
+# tape read -- the SPEC side, whose fence law is ring_first_lap (below
+# the capacity, the slot address IS the index); H.ring_of / the ring
+# write path is the IMPLEMENTATION side, the correspondence theorem's
+# other half -- exactly the Design A / Design B split hist.bend's header
+# comment states.  This statement deliberately REFERENCES FUNCTIONS THAT
+# DO NOT EXIST YET: H.ring_of is the Phase-1 ring write path, and naming
+# it here PINS the API Phase 1 must provide (a tape-to-ring constructor
+# the correspondence theorem can tie to ring_read's spec).  The claim is
+# stated for i0; the i1 endpoint form is identical (conjoin both at
+# proof time if the capstone wants it).
+# law memory_contract:
+#   for +c: R.Config
+#   for +cap: Nat
+#   for +tape: List<&2, F32>
+#   for +ic: F32
+#   for +ls: List<&2, R.Lane>
+#   for +ps: List<&2, R.Proj>
+#   for t: Nat
+#   for i: Nat
+#   for +h: {R.ok(c) == True{} : Bool}
+#   for +hcap: {R.ok_cap(c, cap) == True{} : Bool}
+#   for +hls: {ls == R.init_lanes(R.cfg_lanes(c)) : List<&2, R.Lane>}
+#   for +hps: {ps == R.cfg_projs(c) : List<&2, R.Proj>}
+#   for hb: R.lt_ok(i, R.projs_len(ps))
+#   {H.ring_read(H.ring_of(tape, cap),  # (Phase 1: to be provided)
+#                R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)), cap, ic)
+#      == H.hist_read(tape, R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)), ic)
+#    : F32}
+
+# THE INGRESS CONTRACT.  The same claim as law json_read_fresh
+# (LAWS_json.bend section 4, the ingress capstone): for every string s
+# whose decoded config PASSES R.ok, every routed read after ANY tick
+# count is fresh -- no runtime JSON input can escape the routing
+# contract's freshness half.  This statement is ALREADY PROVED (in
+# PROOF_json.bend, checked green by tests/run_json.sh); restated here as
+# the third named member of the contract family so section 8 is the one
+# place the whole contract is legible.  Phase 2 only LINKS it (a rename
+# / re-export), it does not re-prove it.  Kept commented because
+# LAWS_router.bend does not import json_ingest -- uncommenting requires
+# adding `import ./json_ingest.bend as J` here, which is the Phase-2
+# move (and the law is checked green in LAWS_json.bend regardless).
+# law ingress_contract:  # needs: import ./json_ingest.bend as J
+#   for +s: String
+#   for +m: Nat
+#   for +h: {R.ok(J.json_decode(s)) == True{} : Bool}
+#   {J.bumps_fresh(J.lanes_run(m, R.init_lanes(R.cfg_lanes(J.json_decode(s)))),
+#                  R.cfg_projs(J.json_decode(s)), 0n) == True{} : Bool}
