@@ -256,3 +256,16 @@ companion.
   closed and our files contain no `~` binders. Keep --verdict as the gate, keep
   the mismatch message a hard failure. House rule: **never use `~` template
   params in proof files**.
+
+## Coupling routing laws (2026-10-05)
+
+- Pattern binder modes: `1n+(+p)` marks a Nat succ binder UNRESTRICTED
+  (the `case +h <> t` trick generalised) -- needed when the proof term
+  names the binder more than once. Without it: "consumed more than once".
+- Termination: a recursive call's FIRST CHANGED argument must shrink --
+  arguments are read left to right and each must pass unchanged until
+  one shrinks. Growing an earlier arg (e.g. `lo -> 1n+lo` before
+  shrinking `w`) is rejected; reorder the go so the decreasing arg
+  leads (see win_cells_go's wrapper).
+- Window reading: route_window's w samples are (lo, hi] -- ticks
+  lo+1..hi -- pinned by win_cells_instance.
