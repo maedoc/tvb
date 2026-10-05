@@ -26,6 +26,7 @@ import Base
 import ./router.bend as R
 import ./kernel.bend as K
 import ./hist.bend as H
+import ./json_ingest.bend as J
 
 # --------------------------------------------------------------------------
 # 0. arithmetic helpers, stated once
@@ -1770,36 +1771,70 @@ law mod_inj_lap:
 #       OWN projection list at every tick);
 #   (c) ORDERED: l_i0 <= l_i1 -- the interpolation interval is never
 #       inverted (line_ordered).
-# The lanes/projections are tied to the config by equality hypotheses
-# (ls == init_lanes(cfg_lanes(c)), ps == cfg_projs(c)) so the tick
-# expressions stay short and the claim is exactly about the state a
-# caller would run: the config's own lanes, its own projections.  Phase
-# 2 proves this by INSTANTIATING existing laws (read_fresh_ticks,
-# read_window_lo and line_ordered are already proved); bricks are added
-# only where an induction is missing -- the expected gap is the
-# window-lo lift from one route_read to the whole-tick state.  At proof
-# time the single law may be split into three lemmas (fresh, in-window,
-# ordered) plus a conjunction capstone, as the proof file prefers.
-# law routing_contract:
-#   for +c: R.Config
-#   for +ls: List<&2, R.Lane>
-#   for +ps: List<&2, R.Proj>
-#   for t: Nat
-#   for i: Nat
-#   for +h: {R.ok(c) == True{} : Bool}
-#   for +hls: {ls == R.init_lanes(R.cfg_lanes(c)) : List<&2, R.Lane>}
-#   for +hps: {ps == R.cfg_projs(c) : List<&2, R.Proj>}
-#   for hb: R.lt_ok(i, R.projs_len(ps))
-#   {Bool.and(Nat.is_le(R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
-#                       R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
-#                                                 R.proj_src(R.nth_proj(ps, i))))),
-#       Bool.and(Nat.is_le(Nat.sub(R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
-#                                                          R.proj_src(R.nth_proj(ps, i)))),
-#                                   R.cfg_horizon(c)),
-#                          R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i))),
-#                Nat.is_le(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
-#                          R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)))))
-#    == True{} : Bool}
+# Phase 2 (the proving phase): the three statements below are now LIVE,
+# each with its proof def in PROOF_router.bend.  routing_contract is
+# split as its own comment prescribed: two tick-level lemmas
+# (routing_ordered, routing_in_window) plus the conjunction capstone
+# routing_contract itself; the fresh half needs no new lemma
+# (read_fresh_ticks already proves it for ALL ls/ps, ok-free), and the
+# proj-level window brick read_window_lo needed one route-level lemma
+# (read_window_add, the sharp +1 form the memory side consumes).
+
+# ORDERED half, tick level: after any t ticks the routed line of every
+# in-bounds projection has i0 <= i1 -- line_ordered lifted through the
+# tick's step-then-route definition (route_pointwise peels the route_all
+# layer at t=0; the step case recurses one tick in).
+law routing_ordered:
+  for +ls: List<&2, R.Lane>
+  for +ps: List<&2, R.Proj>
+  for t: Nat
+  for i: Nat
+  for hb: R.lt_ok(i, R.projs_len(ps))
+  {Nat.is_le(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+             R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i))) == True{} : Bool}
+
+# IN-WINDOW half, tick level: under the projection-list shape witness,
+# the routed line's i0 lies at or behind newest - horizon -- the weak
+# form (read_window_lo's), lifted to tick state.  (The sharp +1 form
+# the memory contract needs is routing_window_add, below.)
+law routing_in_window:
+  for +nlanes: Nat
+  for +horizon: Nat
+  for +ls: List<&2, R.Lane>
+  for +ps: List<&2, R.Proj>
+  for t: Nat
+  for i: Nat
+  for hb: R.lt_ok(i, R.projs_len(ps))
+  for +hok: {R.projs_shape_ok(nlanes, horizon, ps) == True{} : Bool}
+  {Nat.is_le(Nat.sub(R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                          R.proj_src(R.nth_proj(ps, i)))),
+                     horizon),
+             R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i))) == True{} : Bool}
+
+# THE CONJUNCTION CAPSTONE (the pinned statement, uncommented verbatim).
+# Proof: and_intro over the three halves -- read_fresh_ticks (fresh,
+# ok-free), routing_in_window (with the shape witness transported from
+# ok(c) through ok_projs + the ps == cfg_projs(c) tie), routing_ordered.
+law routing_contract:
+  for +c: R.Config
+  for +ls: List<&2, R.Lane>
+  for +ps: List<&2, R.Proj>
+  for +t: Nat
+  for +i: Nat
+  for +h: {R.ok(c) == True{} : Bool}
+  for +hls: {ls == R.init_lanes(R.cfg_lanes(c)) : List<&2, R.Lane>}
+  for +hps: {ps == R.cfg_projs(c) : List<&2, R.Proj>}
+  for hb: R.lt_ok(i, R.projs_len(ps))
+  {Bool.and(Nat.is_le(R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                      R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                R.proj_src(R.nth_proj(ps, i))))),
+      Bool.and(Nat.is_le(Nat.sub(R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                         R.proj_src(R.nth_proj(ps, i)))),
+                                  R.cfg_horizon(c)),
+                         R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i))),
+               Nat.is_le(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                          R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)))))
+   == True{} : Bool}
 
 # THE MEMORY CONTRACT (section 7's promised composed capstone).  For
 # every ACCEPTED config c with R.ok_cap(c, cap) == True, over a tape,
@@ -1847,14 +1882,13 @@ law mod_inj_lap:
 # contract's freshness half.  This statement is ALREADY PROVED (in
 # PROOF_json.bend, checked green by tests/run_json.sh); restated here as
 # the third named member of the contract family so section 8 is the one
-# place the whole contract is legible.  Phase 2 only LINKS it (a rename
-# / re-export), it does not re-prove it.  Kept commented because
-# LAWS_router.bend does not import json_ingest -- uncommenting requires
-# adding `import ./json_ingest.bend as J` here, which is the Phase-2
-# move (and the law is checked green in LAWS_json.bend regardless).
-# law ingress_contract:  # needs: import ./json_ingest.bend as J
-#   for +s: String
-#   for +m: Nat
-#   for +h: {R.ok(J.json_decode(s)) == True{} : Bool}
-#   {J.bumps_fresh(J.lanes_run(m, R.init_lanes(R.cfg_lanes(J.json_decode(s)))),
-#                  R.cfg_projs(J.json_decode(s)), 0n) == True{} : Bool}
+# place the whole contract is legible.  Phase 2 links it by importing
+# json_ingest here and proving it in PROOF_router.bend by adapting
+# PROOF_json.bend's json_read_fresh proof (the law is ALSO checked
+# green in LAWS_json.bend, by tests/run_json.sh).
+law ingress_contract:
+  for +s: String
+  for +m: Nat
+  for +h: {R.ok(J.json_decode(s)) == True{} : Bool}
+  {J.bumps_fresh(J.lanes_run(m, R.init_lanes(R.cfg_lanes(J.json_decode(s)))),
+                 R.cfg_projs(J.json_decode(s)), 0n) == True{} : Bool}

@@ -14,6 +14,7 @@ import ./LAWS_router.bend as Laws
 import ./router.bend as R
 import ./kernel.bend as K
 import ./hist.bend as H
+import ./json_ingest.bend as J
 
 # False is not True: the motive sends True to Empty, so transporting along a
 # proof of {False == True} lands in Empty and anything follows.
@@ -3362,3 +3363,200 @@ def Laws.ring_read_live_good_4():
 
 def Laws.ring_read_stale_good_4():
   {==}
+
+# --------------------------------------------------------------------------
+# 8. THE CONTRACT: the three capstones and their lemma ladders
+# --------------------------------------------------------------------------
+
+# ---- ingress_contract (adapted from PROOF_json.bend's json_read_fresh) ----
+
+# and-introduction, the mirror of the and_elim pair (filled laws do not
+# re-export across module imports, so it is restated here)
+def and_intro(a: Bool, b: Bool,
+              +ha: {a == True{} : Bool},
+              +hb: {b == True{} : Bool})
+    -> {Bool.and(a, b) == True{} : Bool}:
+  match a:
+    case True{}:
+      hb
+    case False{}:
+      Bool.fne({Bool.and(False{}, b) == True{} : Bool}, ha)
+
+# the leaf: one bumped line is fresh.  route_bump reads at delay
+# 1 + newest + e, so route_read's d>=1 branch gives i1 = sub(n, n+e) and
+# freshness is sub_le_b (n - anything <= n) at the lane's newest n.
+def bump_fresh(+ls: List<&2, R.Lane>, +p: R.Proj, +e: Nat)
+    -> {J.line_fresh(ls, J.route_bump(ls, p, e), R.proj_src(p)) == True{} : Bool}:
+  Laws.sub_le_b(R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                Nat.add(R.lane_newest(R.nth_lane(ls, R.proj_src(p))), e))
+
+# the fold: pointwise freshness over the projection list, mirroring the
+# runtime predicate's own recursion
+def bumps_fresh_go(+ls: List<&2, R.Lane>, ps: List<&2, R.Proj>, +e: Nat)
+    -> {J.bumps_fresh(ls, ps, e) == True{} : Bool}:
+  match ps:
+    case Nil{}:
+      {==}
+    case +h <> +t:
+      and_intro(J.line_fresh(ls, J.route_bump(ls, h, e), R.proj_src(h)),
+               J.bumps_fresh(ls, t, e),
+               bump_fresh(ls, h, e),
+               bumps_fresh_go(ls, t, e))
+
+def Laws.ingress_contract(s, m, h):
+  bumps_fresh_go(J.lanes_run(m, R.init_lanes(R.cfg_lanes(J.json_decode(s)))),
+                 R.cfg_projs(J.json_decode(s)), 0n)
+
+# ---- routing_contract: the three halves and the conjunction capstone ----
+
+# ORDERED half: induction on t.  t=1+q peels one tick (ticks unfolds to
+# ticks(q, tick_lanes(tick(ls, ps)), ps) definitionally); t=0 routes
+# against ls itself, and the line index peels WITH the projection list
+# (nth_line(route_all, 0) is the head route_proj definitionally), so the
+# base is a ps/i induction whose head is exactly line_ordered and whose
+# bounds witness kills the Nil case.
+def routing_ordered_nil(+ls: List<&2, R.Lane>, ps: List<&2, R.Proj>, i: Nat,
+                        h: R.lt_ok(i, R.projs_len(ps)))
+  -> {Nat.is_le(R.l_i0(R.nth_line(R.tick_lines(R.ticks(0n, ls, ps)), i)),
+                R.l_i1(R.nth_line(R.tick_lines(R.ticks(0n, ls, ps)), i))) == True{} : Bool}:
+  match ps i h:
+    case Nil{} _ h:
+      Empty.absurd({Nat.is_le(R.l_i0(R.nth_line(R.route_all(ls, Nil{}), i)),
+                               R.l_i1(R.nth_line(R.route_all(ls, Nil{}), i))) == True{} : Bool},
+                   lt_ok_nil_absurd(i, h))
+    case +p <> t 0n _:
+      Laws.line_ordered(R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                        R.proj_d(p),
+                        R.lane_num(R.nth_lane(ls, R.proj_src(p))),
+                        R.lane_k(R.nth_lane(ls, R.proj_src(p))),
+                        R.proj_win(p))
+    case p <> t 1n+q hlt:
+      routing_ordered_nil(ls, t, q, hlt)
+
+def routing_ordered_go(t: Nat, +ls: List<&2, R.Lane>, +ps: List<&2, R.Proj>,
+                       i: Nat, hb: R.lt_ok(i, R.projs_len(ps)))
+  -> {Nat.is_le(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i))) == True{} : Bool}:
+  match t:
+    case 0n:
+      routing_ordered_nil(ls, ps, i, hb)
+    case 1n+q:
+      routing_ordered_go(q, R.tick_lanes(R.tick(ls, ps)), ps, i, hb)
+
+def Laws.routing_ordered(ls, ps, t, i, hb):
+  routing_ordered_go(t, ls, ps, i, hb)
+
+# IN-WINDOW, proj level (the weak form): read_window_lo gives
+# n - horizon <= n - (d + win); the window's own head is n - d
+# (read_i0_is_window_head); antitonicity orders n - (d + win) behind
+# n - d; le_trans chains them.  Pure composition of proved bricks.
+def routing_in_window_proj(+n: Nat, nlanes: Nat, +horizon: Nat, +p: R.Proj,
+                            +num: Nat, +den: Nat,
+                            +h: {R.proj_shape_ok(nlanes, horizon, p) == True{} : Bool})
+    -> {Nat.is_le(Nat.sub(n, horizon),
+                  R.l_i0(R.route_read(n, R.proj_d(p), num, den, R.proj_win(p)))) == True{} : Bool}:
+  btrans(Nat.is_le(Nat.sub(n, horizon),
+                   R.l_i0(R.route_read(n, R.proj_d(p), num, den, R.proj_win(p)))),
+         Nat.is_le(Nat.sub(n, horizon),
+                   R.win_hi(R.route_window(n, R.proj_d(p), R.proj_win(p)))),
+         Equal.cong(Nat, Bool, x => Nat.is_le(Nat.sub(n, horizon), x),
+                    R.l_i0(R.route_read(n, R.proj_d(p), num, den, R.proj_win(p))),
+                    R.win_hi(R.route_window(n, R.proj_d(p), R.proj_win(p))),
+                    Equal.sym(Nat,
+                      R.win_hi(R.route_window(n, R.proj_d(p), R.proj_win(p))),
+                      R.l_i0(R.route_read(n, R.proj_d(p), num, den, R.proj_win(p))),
+                      Laws.read_i0_is_window_head(n, R.proj_d(p), num, den,
+                                                  R.proj_win(p)))),
+         Laws.le_trans(Nat.sub(n, horizon),
+                       Nat.sub(n, Nat.add(R.proj_d(p), R.proj_win(p))),
+                       Nat.sub(n, R.proj_d(p)),
+                       Laws.read_window_lo(n, nlanes, horizon, p, h),
+                       Laws.sub_antitone(n, R.proj_d(p),
+                                         Nat.add(R.proj_d(p), R.proj_win(p)),
+                                         le_add_r(R.proj_d(p), R.proj_win(p)))))
+
+# IN-WINDOW half, tick level: the same t-induction; at t=0 the line
+# index peels with the projection list, the head needs only the fold's
+# head conjunct (projs_ok_cons), the tail recurses with the peeled
+# bounds witness and the tail conjunct.
+def routing_window_nil(+nlanes: Nat, +horizon: Nat, +ls: List<&2, R.Lane>,
+                       ps: List<&2, R.Proj>, i: Nat, h: R.lt_ok(i, R.projs_len(ps)),
+                       +hok: {R.projs_shape_ok(nlanes, horizon, ps) == True{} : Bool})
+  -> {Nat.is_le(Nat.sub(R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(0n, ls, ps)),
+                                                R.proj_src(R.nth_proj(ps, i)))), horizon),
+                R.l_i0(R.nth_line(R.tick_lines(R.ticks(0n, ls, ps)), i))) == True{} : Bool}:
+  match ps i h:
+    case Nil{} _ h:
+      Empty.absurd({Nat.is_le(Nat.sub(R.lane_newest(R.nth_lane(ls,
+                                                    R.proj_src(R.nth_proj(Nil{}, i)))), horizon),
+                               R.l_i0(R.nth_line(R.route_all(ls, Nil{}), i))) == True{} : Bool},
+                   lt_ok_nil_absurd(i, h))
+    case +p <> +t 0n _:
+      routing_in_window_proj(R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                             nlanes, horizon, p,
+                             R.lane_num(R.nth_lane(ls, R.proj_src(p))),
+                             R.lane_k(R.nth_lane(ls, R.proj_src(p))),
+                             and_elim_l_go(R.proj_shape_ok(nlanes, horizon, p),
+                                           R.projs_shape_ok(nlanes, horizon, t),
+                                           hok))
+    case p <> t 1n+q hlt:
+      routing_window_nil(nlanes, horizon, ls, t, q, hlt,
+                         and_elim_r_go(R.proj_shape_ok(nlanes, horizon, p),
+                                       R.projs_shape_ok(nlanes, horizon, t),
+                                       hok))
+
+def routing_window_tick_go(+nlanes: Nat, +horizon: Nat, t: Nat,
+                           +ls: List<&2, R.Lane>, +ps: List<&2, R.Proj>,
+                           i: Nat, hb: R.lt_ok(i, R.projs_len(ps)),
+                           +hok: {R.projs_shape_ok(nlanes, horizon, ps) == True{} : Bool})
+  -> {Nat.is_le(Nat.sub(R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                R.proj_src(R.nth_proj(ps, i)))),
+                         horizon),
+                R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i))) == True{} : Bool}:
+  match t:
+    case 0n:
+      routing_window_nil(nlanes, horizon, ls, ps, i, hb, hok)
+    case 1n+q:
+      routing_window_tick_go(nlanes, horizon, q, R.tick_lanes(R.tick(ls, ps)),
+                             ps, i, hb, hok)
+
+def Laws.routing_in_window(nlanes, horizon, ls, ps, t, i, hb, hok):
+  routing_window_tick_go(nlanes, horizon, t, ls, ps, i, hb, hok)
+
+# THE CAPSTONE: and_intro over the three halves.  The in-window half's
+# shape witness is ok(c)'s projs_shape_ok conjunct, transported from
+# cfg_projs(c) to ps across the equality tie hps (cong on the fold).
+def Laws.routing_contract(c, ls, ps, t, i, h, hls, hps, hb):
+  # hb is a Type witness (not +able); the three halves each need it, so
+  # convert it ONCE to the Bool form and back per use (le_ok_iff / b_le).
+  +hbB = Laws.le_ok_iff(Nat.add(i, 1n), R.projs_len(ps), hb)
+  hok_ps = btrans(R.projs_shape_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c), ps),
+                  R.projs_shape_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c),
+                                   R.cfg_projs(c)),
+                  Equal.cong(List<&2, R.Proj>, Bool,
+                    xs => R.projs_shape_ok(R.nats_len(R.cfg_lanes(c)),
+                                           R.cfg_horizon(c), xs),
+                    ps, R.cfg_projs(c), hps),
+                  Laws.ok_projs(c, h))
+  and_intro(Nat.is_le(R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                      R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                R.proj_src(R.nth_proj(ps, i))))),
+            Bool.and(Nat.is_le(Nat.sub(R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                               R.proj_src(R.nth_proj(ps, i)))),
+                                       R.cfg_horizon(c)),
+                               R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i))),
+                     Nat.is_le(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                               R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)))),
+            Laws.read_fresh_ticks(ls, ps, t, i, b_le(Nat.add(i, 1n), R.projs_len(ps), hbB)),
+            and_intro(Nat.is_le(Nat.sub(R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                               R.proj_src(R.nth_proj(ps, i)))),
+                                        R.cfg_horizon(c)),
+                                R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i))),
+                      Nat.is_le(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                                R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i))),
+                      Laws.routing_in_window(R.nats_len(R.cfg_lanes(c)),
+                                             R.cfg_horizon(c), ls, ps, t, i,
+                                             b_le(Nat.add(i, 1n), R.projs_len(ps), hbB),
+                                             hok_ps),
+                      Laws.routing_ordered(ls, ps, t, i,
+                                           b_le(Nat.add(i, 1n), R.projs_len(ps), hbB))))
