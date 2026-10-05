@@ -1,5 +1,41 @@
 # The Bend hybrid law suite — a guided tour
 
+The Virtual Brain (TVB) simulates whole-brain activity as a network of
+**neural mass models**: each brain region runs a mean-field system —
+here the Montbrio–Pazo–Roxin rate equations for firing rate `r` and
+mean voltage `V` — and regions exchange input over the structural
+connectome, whose per-edge weights and axonal delays come from diffusion
+tractography. The **hybrid** engine generalises this to multi-scale
+co-simulation: the network is cut into subnets that integrate at
+*different timesteps* — fast populations at a fine `dt`, slow ones at a
+coarse `dt` — and a master clock ticks them in lockstep while every
+coupling edge presents its source's *delayed* signal. A fast consumer
+reads an interpolated slice of the slow lane's publication stream; a
+slow consumer reads a windowed average of the fast lane (the anti-alias
+compensation for sampling it sparsely); temporal-average monitors
+accumulate the zero-order-held trajectory. What this buys is
+expressiveness: one simulation can mix timescales — fast sensory
+populations driving slow cortical dynamics — with realistic long-range
+delays, without paying the fine `dt` everywhere.
+
+Why prove it: almost all of that machinery is *index arithmetic* — which
+sample does edge `e` read at tick `t`, with which interpolation
+fraction, over which window, written into which slot — and index
+arithmetic fails silently. A one-off in the delay indexing shifts
+effective causality; a ring buffer smaller than the horizon aliases old
+samples onto fresh reads; a zero-delay read asks for a sample one tick
+*in the future*; two edges accumulating into one float slot make the
+result order-dependent. None of these crash; all of them change the
+science. With several `dt`s the scheduling state space explodes and
+review by eye stops scaling. This suite moves the multi-rate semantics
+from "trust the template" to theorems: staleness is *provably* bounded
+(`stale_bound`), slow inputs are *provably* windowed over exactly the
+right samples (`window_span`, `win_cells_nth`), no read ever sees the
+future (`read_fresh_ticks`), and writes are *provably* collision-free
+(`ok_no_clash`). Any engine implementing the schedule — the numba
+template today, a Bend-native or other backend tomorrow — can then be
+checked against the same contract instead of re-audited by hand.
+
 How the tvb hybrid simulator's **routing core** was re-cast as a proved
 object in [Bend](https://github.com/bendlang/bend) 2.0 — what the data
 structures are, what the laws say, and how to check them.
