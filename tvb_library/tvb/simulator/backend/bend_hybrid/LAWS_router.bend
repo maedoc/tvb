@@ -1093,6 +1093,20 @@ law i0_win_irrelevant:
   {R.l_i0(R.route_read(n, d, num, den, wa))
    == R.l_i0(R.route_read(n, d, num, den, wb)) : Nat}
 
+# the win pass-through -- the surviving-mutant fix: route_read carries its
+# win argument into the Line's win field UNCHANGED, in BOTH branches (the
+# d=0 clamp zeroes the fraction, NOT the window).  Before this law no
+# claim in the file mentioned l_win, and mutating the d=0 branch's win
+# field passed every proof (Phase 3 manual mutation testing -- the known
+# gap in NOTES.md).  This pins the field the kernel's averaging reads.
+law l_win_pass_through:
+  for +n: Nat
+  for +d: Nat
+  for +num: Nat
+  for +den: Nat
+  for +win: Nat
+  {R.l_win(R.route_read(n, d, num, den, win)) == win : Nat}
+
 law route_distinct:
   for +ls: List<&2, R.Lane>
   for +pa: R.Proj

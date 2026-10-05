@@ -1541,6 +1541,20 @@ def i0_win_irrelevant_go(+n: Nat, +d: Nat, +num: Nat, +den: Nat,
 def Laws.i0_win_irrelevant(n, d, num, den, wa, wb):
   i0_win_irrelevant_go(n, d, num, den, wa, wb)
 
+# l_win_pass_through: definitional per branch -- the win field is the
+# same parameter in both arms of route_read's match, so each case
+# normalises (the go-lemma cases on d exactly as i0_win_irrelevant_go).
+def l_win_pass_through_go(+n: Nat, +d: Nat, +num: Nat, +den: Nat, +win: Nat)
+    -> {R.l_win(R.route_read(n, d, num, den, win)) == win : Nat}:
+  match d:
+    case 0n:
+      {==}
+    case 1n+dp:
+      {==}
+
+def Laws.l_win_pass_through(n, d, num, den, win):
+  l_win_pass_through_go(n, d, num, den, win)
+
 # route_distinct: both projections read the same source lane, so pb's
 # source can be substituted into pa's read (eq_of_is_eq + Equal.sym: the
 # rewrite replaces the marked positions with the LEFT side), and then
