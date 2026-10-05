@@ -143,11 +143,9 @@ Official: [Winning Is Impossible](https://github.com/bendlang/bend/tree/main/dem
 
 ## Relevance to tvb-bend — take order
 
-1. **bendcheck** → E19 property harness (fuzz `ok`/`csr_ok`, reuse generators/shrinking; `lawcheck` over our LAWS files).
-2. **bend-lemmas** → drop-in arithmetic bricks; pre-pay `window_span`/`staleness_bound` prereqs (A3/A4), dedupe `add_zero`-class laws.
-3. **bend-falsify + bend-ldd** → harden the 40-law suite: literal-instance falsification + proof mutation (the `nats_last` class of bug, mechanized).
-4. **bend-json** → reference architecture; swap in if the config schema outgrows the strict subset (its state-machine parsing validates our `obj_go` idiom).
-5. **Bend verdict investigation + Bender** → read before deepening the `--verdict` trust story.
+1. **bendcheck** → VETTED, RAN on 2.0.34 (python3 only): self-test 13/14 (one cosmetic version-string assert), mutation 6/6 killed; `lawcheck` fuzzed 49 of 147 laws in LAWS_router.bend at 2 seeds (1x200 + 7x1000) with ZERO counterexamples. 98 laws not testable (pinned instances, custom ADTs, F32 equalities, decider premises, multiline claims — lawcheck's limits, not ours). Run from a /tmp copy of the import closure (lawcheck writes `lawcheck_run.bend` beside the LAWS file). Known lawcheck bug: F32 laws poison the helper table and crash the run — worth an upstream issue (one-line fix).
+2. **Bend verdict investigation** (leo-guinan/bend-verdict-investigation) → READ; verdict: **KEEP --verdict**. Its reported checker/BendTT-kernel mismatch (issue-1182 class: opaque `~F` template params with dependent-equality results) is still live in 2.0.34 but fails CLOSED (verdict rejects, nonzero exit); our suite has zero `~` binders and is not in the affected class. Treat the mismatch message as hard failure; never introduce `~` template params into proof files.
+3. **bend-falsify** → NOT RUNNABLE (bun missing, install not authorized). Manual runMutants substitute on a /tmp copy: one mutation KILLS (lane_newest body → `Laws.lane_newest_k1`), one SURVIVES (route_read's d=0 `win` field — `l_win` appears in no law claim: a real, documented coverage gap).
 
 ## Caveats
 

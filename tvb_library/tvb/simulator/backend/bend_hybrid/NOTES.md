@@ -241,3 +241,18 @@ companion.
   lockstep induction (`sum_le_shift_go`); and the append helper
   (`happ2`) must recurse on the FIRST argument for the base case to be
   definitional, with `happ2_snoc_move` as its step bridge.
+
+## External-tool recon (Phase 3)
+
+- bendcheck's lawcheck runs on 2.0.34 and fuzzes our LAWS_router clean (49 of
+  147 laws x 200/1000 tests, seeds 1/7, 0 counterexamples); F32, custom-ADT,
+  pinned-instance and decider-typed laws are outside its generator set.
+- Known gap — mutation testing (manual, /tmp copy) found a SURVIVING MUTANT:
+  route_read's d=0 branch `win` field is unpinned by the 147 laws (`l_win`
+  appears in no claim). Candidate fix-law if load-bearing:
+  `l_win(route_read(n,d,num,den,win)) == win`.
+- --verdict trust: issue-1182 (checker/BendTT mismatch on opaque `~F` templates
+  with dependent-equality results) reproduced UNFIXED on 2.0.34, but it fails
+  closed and our files contain no `~` binders. Keep --verdict as the gate, keep
+  the mismatch message a hard failure. House rule: **never use `~` template
+  params in proof files**.
