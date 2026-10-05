@@ -1836,44 +1836,154 @@ law routing_contract:
                           R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)))))
    == True{} : Bool}
 
-# THE MEMORY CONTRACT (section 7's promised composed capstone).  For
-# every ACCEPTED config c with R.ok_cap(c, cap) == True, over a tape,
-# every law-bearing routed read's RING SLOT delivers the tape's leaf:
-# the engine's ring holds, at slot s, the sample of the NEWEST tick
-# congruent to s mod cap, and law-bearing reads lie in
-# [newest - horizon, newest] with horizon <= cap (read_window_lo +
-# read_fresh + ok_cap) -- i.e. inside the live window, where the slot
-# delivers exactly the tape's sample.  The bricks: the divmod family
-# (mod_lt, mod_period, mod_inj_lap) plus Phase 1's WRITE laws.  Note
-# which side is which: ring_read as it exists TODAY is the mod-addressed
-# tape read -- the SPEC side, whose fence law is ring_first_lap (below
-# the capacity, the slot address IS the index); H.ring_of / the ring
-# write path is the IMPLEMENTATION side, the correspondence theorem's
-# other half -- exactly the Design A / Design B split hist.bend's header
-# comment states.  This statement deliberately REFERENCES FUNCTIONS THAT
-# DO NOT EXIST YET: H.ring_of is the Phase-1 ring write path, and naming
-# it here PINS the API Phase 1 must provide (a tape-to-ring constructor
-# the correspondence theorem can tie to ring_read's spec).  The claim is
-# stated for i0; the i1 endpoint form is identical (conjoin both at
-# proof time if the capstone wants it).
-# law memory_contract:
-#   for +c: R.Config
-#   for +cap: Nat
-#   for +tape: List<&2, F32>
-#   for +ic: F32
-#   for +ls: List<&2, R.Lane>
-#   for +ps: List<&2, R.Proj>
-#   for t: Nat
-#   for i: Nat
-#   for +h: {R.ok(c) == True{} : Bool}
-#   for +hcap: {R.ok_cap(c, cap) == True{} : Bool}
-#   for +hls: {ls == R.init_lanes(R.cfg_lanes(c)) : List<&2, R.Lane>}
-#   for +hps: {ps == R.cfg_projs(c) : List<&2, R.Proj>}
-#   for hb: R.lt_ok(i, R.projs_len(ps))
-#   {H.ring_read(H.ring_of(tape, cap),  # (Phase 1: to be provided)
-#                R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)), cap, ic)
-#      == H.hist_read(tape, R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)), ic)
-#    : F32}
+# THE MEMORY CONTRACT (section 7's promised composed capstone), proved in
+# TWO LAYERS (the honest fix the pinned statement needed -- see the
+# statement adjustment note below):
+#
+#   Layer 1, ring_correspondence (pure memory, no config): for j in the
+#            tape's LIVE WINDOW, ring_read(ring_of(tape, cap), j, cap, ic)
+#            == hist_read(tape, j, ic).  This is section 7's promised
+#            correspondence theorem.  The live window is stated in the
+#            DECIDER-FRIENDLY form: hist_len(tape) <= j + cap (exactly
+#            j >= len - cap with the saturating sub, and always true on
+#            the first lap, where ring_of IS the tape); the upper bound
+#            is the separate lt_ok(j, hist_len(tape)) witness.
+#   Layer 2, memory_contract (composed, the pinned name): the section-8
+#            conclusion INTACT, plus the tie hypotheses the composition
+#            needs -- see the adjustment note.
+#
+# The supporting bricks (each a law, ladder-style): mod_succ_le (the
+# one-tick slot bound the accumulator invariant advances by),
+# ring_write_len_succ (a within-length write always leaves room for one
+# more), add_le_mono_r (monotonicity of + on the right), read_window_add
+# (the SHARP in-window bound: 1 + newest <= i0 + horizon, the +1 that
+# delay-fits d + 1 <= horizon buys -- the weak bound newest - horizon
+# <= i0 is one short of the ring's live window when horizon == cap),
+# routing_window_add (the sharp bound lifted to tick state).
+
+# the one-tick slot bound: the slot after one more tick is at most one
+# past the current slot -- the arithmetic heart of the accumulator
+# invariant (each fold write's slot stays within the accumulator's
+# length, which grows by at most one per write).
+law mod_succ_le:
+  for +n: Nat
+  for +cp: Nat
+  {Nat.is_le(Nat.mod(Nat.add(1n, n), 1n+cp),
+             Nat.add(1n, Nat.mod(n, 1n+cp))) == True{} : Bool}
+
+# monotonicity of addition on the right: b <= c implies a + b <= a + c.
+# The composed capstone chains the sharp window bound (at horizon) up to
+# the ring's capacity (at cap) through exactly this brick.
+law add_le_mono_r:
+  for a: Nat
+  for +b: Nat
+  for +c: Nat
+  for +h: {Nat.is_le(b, c) == True{} : Bool}
+  {Nat.is_le(Nat.add(a, b), Nat.add(a, c)) == True{} : Bool}
+
+# a write whose slot is within the tape always leaves the result at
+# least one longer than the slot: the extension case appends (length
+# s+1), the overwrite case keeps a length already above s.  This is
+# what makes the fold's write-read/stability witnesses preservable.
+law ring_write_len_succ:
+  for +xs: List<&2, F32>
+  for +v: F32
+  for s: Nat
+  for h: R.le_ok(s, H.hist_len(xs))
+  {Nat.is_le(Nat.add(1n, s),
+             H.hist_len(H.ring_write(xs, v, s))) == True{} : Bool}
+
+# THE sharp window bound, route level: for any read whose delay fits
+# the horizon (d + 1 <= horizon -- the proj_shape_ok delay conjunct),
+# the read's i0 satisfies 1 + n <= i0 + horizon, i.e. i0 >= n + 1 -
+# horizon: the +1 is bought by the delay conjunct's own +1 (the i1
+# endpoint's freshness margin).  The ring's live window starts at
+# len - cap = (1 + n) - cap, so the WEAK bound (n - horizon <= i0)
+# is one short exactly when horizon == cap; this sharp form closes
+# that gap and is what memory_contract consumes.
+law read_window_add:
+  for +n: Nat
+  for +d: Nat
+  for +num: Nat
+  for +den: Nat
+  for +win: Nat
+  for +horizon: Nat
+  for +h: {Nat.is_le(Nat.add(d, 1n), horizon) == True{} : Bool}
+  {Nat.is_le(Nat.add(1n, n),
+             Nat.add(R.l_i0(R.route_read(n, d, num, den, win)),
+                     horizon)) == True{} : Bool}
+
+# the sharp bound at tick state: under the projection-list shape
+# witness, every routed line's i0 satisfies 1 + newest <= i0 + horizon.
+law routing_window_add:
+  for +nlanes: Nat
+  for +horizon: Nat
+  for +ls: List<&2, R.Lane>
+  for +ps: List<&2, R.Proj>
+  for t: Nat
+  for i: Nat
+  for hb: R.lt_ok(i, R.projs_len(ps))
+  for +hok: {R.projs_shape_ok(nlanes, horizon, ps) == True{} : Bool}
+  {Nat.is_le(Nat.add(1n,
+                     R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                              R.proj_src(R.nth_proj(ps, i))))),
+             Nat.add(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                     horizon)) == True{} : Bool}
+
+# LAYER 1, the correspondence theorem: for every j inside the tape's
+# live window (j < len AND len <= j + cap, the decider-friendly form of
+# len - cap <= j), the ring's slot for absolute tick j delivers the
+# tape's own sample at j.  The proof is a front-induction over the fold
+# (ring_of_go generalized over the start tick and the accumulator,
+# carrying the accumulator invariant le_ok(mod(tick, cap), len(acc))):
+# the head case is write-read + slot stability of the remaining fold
+# (mod_inj_lap keeps every later write a different slot), the step case
+# recurses at the same absolute tick.
+law ring_correspondence:
+  for +tape: List<&2, F32>
+  for +cap: Nat
+  for +ic: F32
+  for j: Nat
+  for hj: R.lt_ok(j, H.hist_len(tape))
+  for hw: R.le_ok(H.hist_len(tape), Nat.add(j, cap))
+  {H.ring_read(H.ring_of(tape, cap), j, cap, ic)
+     == H.hist_read(tape, j, ic) : F32}
+
+# LAYER 2, the composed capstone.  STATEMENT ADJUSTMENT (the honest
+# fix): the pinned statement as written quantified +tape and +ls
+# independently, and the conclusion is FALSE without a tie (tape
+# a<>b<>c<>d<>e, cap 4, endpoint j = 5: the ring slot mod(5,4) = 1
+# holds tape[1], not the IC fill the past-the-end RHS answers).  The
+# original prose already said "law-bearing reads lie in
+# [newest-horizon, newest]"; Phase 2 supplies the hypotheses that make
+# that tie explicit:
+#   +htape: hist_len(tape) == 1 + newest(source lane at tick state)
+# (the tape IS the history the source lane published: sample i is the
+# sample of tick i, the newest is at index newest, so the tape has
+# exactly 1 + newest samples).  The conclusion text is UNCHANGED from
+# the pinned statement.  Proof: the endpoint j = i0 is inside
+# [newest+1-horizon, newest] by routing_window_add (sharp) + ordered +
+# fresh, the window lands inside the tape's live window via ok_cap
+# (horizon <= cap, add_le_mono_r), and ring_correspondence closes.
+law memory_contract:
+  for +c: R.Config
+  for +cap: Nat
+  for +tape: List<&2, F32>
+  for +ic: F32
+  for +ls: List<&2, R.Lane>
+  for +ps: List<&2, R.Proj>
+  for +t: Nat
+  for +i: Nat
+  for +h: {R.ok(c) == True{} : Bool}
+  for +hcap: {R.ok_cap(c, cap) == True{} : Bool}
+  for +hls: {ls == R.init_lanes(R.cfg_lanes(c)) : List<&2, R.Lane>}
+  for +hps: {ps == R.cfg_projs(c) : List<&2, R.Proj>}
+  for hb: R.lt_ok(i, R.projs_len(ps))
+  for +htape: {H.hist_len(tape) == Nat.add(1n, R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)), R.proj_src(R.nth_proj(ps, i))))) : Nat}
+  {H.ring_read(H.ring_of(tape, cap),
+               R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)), cap, ic)
+     == H.hist_read(tape, R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)), ic)
+   : F32}
 
 # THE INGRESS CONTRACT.  The same claim as law json_read_fresh
 # (LAWS_json.bend section 4, the ingress capstone): for every string s

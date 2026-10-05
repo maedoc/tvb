@@ -3560,3 +3560,559 @@ def Laws.routing_contract(c, ls, ps, t, i, h, hls, hps, hb):
                                              hok_ps),
                       Laws.routing_ordered(ls, ps, t, i,
                                            b_le(Nat.add(i, 1n), R.projs_len(ps), hbB))))
+
+# --------------------------------------------------------------------------
+# 8b. the memory contract ladder: mod_succ_le, add_le_mono_r,
+#     ring_write_len_succ, read_window_add (sharp), routing_window_add,
+#     ring_correspondence, memory_contract
+# --------------------------------------------------------------------------
+
+# ---- mod_succ_le: the one-tick slot bound, via the mm twin ----
+# PL(n, m, r): the slot after 1+n ticks is at most one past the slot
+# after n ticks.  One induction over (n, m); the +n case peels one tick
+# off both machines (the wrap hands m's role to r, the normal tick
+# charges r by one), each case IS the hypothesis.
+def mod_succ_le_pl(n: Nat, m: Nat, r: Nat)
+  -> {Nat.is_le(Pair.snd(Nat, Nat, mm(Nat.add(1n, n), m, r)),
+                Nat.add(1n, Pair.snd(Nat, Nat, mm(n, m, r)))) == True{} : Bool}:
+  match n m:
+    case 0n 0n:
+      {==}
+    case 0n 1n+mp:
+      Laws.le_refl_b(r)
+    case 1n+np 0n:
+      mod_succ_le_pl(np, r, 0n)
+    case 1n+np 1n+mp:
+      mod_succ_le_pl(np, mp, 1n+r)
+
+# the law form: bridge both mods to the twin with go_state, then PL.
+# Both rewrites go FROM the go-machine terms TO the twin terms (the
+# chain is the btrans equality {law-goal == PL-goal}), so go_state is
+# used directly, no sym.
+def Laws.mod_succ_le(n, cp):
+  btrans(Nat.is_le(Nat.mod(Nat.add(1n, n), 1n+cp),
+                   Nat.add(1n, Nat.mod(n, 1n+cp))),
+         Nat.is_le(Pair.snd(Nat, Nat, mm(Nat.add(1n, n), cp, 0n)),
+                   Nat.add(1n, Pair.snd(Nat, Nat, mm(n, cp, 0n)))),
+         Equal.trans(Bool,
+           Nat.is_le(Nat.mod(Nat.add(1n, n), 1n+cp),
+                     Nat.add(1n, Nat.mod(n, 1n+cp))),
+           Nat.is_le(Pair.snd(Nat, Nat, mm(Nat.add(1n, n), cp, 0n)),
+                     Nat.add(1n, Nat.mod(n, 1n+cp))),
+           Nat.is_le(Pair.snd(Nat, Nat, mm(Nat.add(1n, n), cp, 0n)),
+                     Nat.add(1n, Pair.snd(Nat, Nat, mm(n, cp, 0n)))),
+           Equal.cong(Nat, Bool, x => Nat.is_le(x, Nat.add(1n, Nat.mod(n, 1n+cp))),
+                      Nat.mod(Nat.add(1n, n), 1n+cp),
+                      Pair.snd(Nat, Nat, mm(Nat.add(1n, n), cp, 0n)),
+                      go_state(Nat.add(1n, n), cp, 0n, 0n)),
+           Equal.cong(Nat, Bool,
+                      x => Nat.is_le(Pair.snd(Nat, Nat, mm(Nat.add(1n, n), cp, 0n)), x),
+                      Nat.add(1n, Nat.mod(n, 1n+cp)),
+                      Nat.add(1n, Pair.snd(Nat, Nat, mm(n, cp, 0n))),
+                      Equal.cong(Nat, Nat, x => Nat.add(1n, x),
+                                 Nat.mod(n, 1n+cp),
+                                 Pair.snd(Nat, Nat, mm(n, cp, 0n)),
+                                 go_state(n, cp, 0n, 0n)))),
+         mod_succ_le_pl(n, cp, 0n))
+
+# ---- add_le_mono_r: induction on a; the succ case peels one successor
+# off both sums, the base is the hypothesis itself (add(0, x) == x).
+def add_le_mono_r_go(a: Nat, b: Nat, c: Nat,
+                     +h: {Nat.is_le(b, c) == True{} : Bool})
+    -> {Nat.is_le(Nat.add(a, b), Nat.add(a, c)) == True{} : Bool}:
+  match a:
+    case 0n:
+      h
+    case 1n+a2:
+      add_le_mono_r_go(a2, b, c, h)
+
+def Laws.add_le_mono_r(a, b, c, h):
+  add_le_mono_r_go(a, b, c, h)
+
+# ---- ring_write_len_succ: induction on (xs, s).  The extension case
+# (s = 0 at Nil / at the spine's end) computes; the overwrite case
+# recurses with the peeled witness, the goal peeling one successor on
+# both sides in lockstep.
+def ring_write_len_succ_go(+xs: List<&2, F32>, +v: F32, s: Nat,
+                           h: R.le_ok(s, H.hist_len(xs)))
+  -> {Nat.is_le(Nat.add(1n, s),
+                H.hist_len(H.ring_write(xs, v, s))) == True{} : Bool}:
+  match xs s h:
+    case Nil{} 0n _:
+      {==}
+    case Nil{} 1n+p h:
+      Empty.absurd({Nat.is_le(Nat.add(1n, 1n+p),
+                              H.hist_len(H.ring_write(Nil{}, v, 1n+p))) == True{} : Bool},
+                   le_succ_zero_absurd(p, h))
+    case h <> t 0n _:
+      le_zero(H.hist_len(t))
+    case h <> t 1n+p h:
+      ring_write_len_succ_go(t, v, p, h)
+
+def Laws.ring_write_len_succ(xs, v, s, h):
+  ring_write_len_succ_go(xs, v, s, h)
+
+# ---- the accumulator invariant step: the write at tick tk's slot keeps
+# the invariant valid at tick 1+tk -- mod_succ_le bounds the next slot
+# by one past the current, ring_write_len_succ keeps the accumulator at
+# least that long.
+def hwinv_step(+cp: Nat, +tk: Nat, +acc: List<&2, F32>, +v: F32,
+               h: R.le_ok(Nat.mod(tk, 1n+cp), H.hist_len(acc)))
+  -> R.le_ok(Nat.mod(Nat.add(1n, tk), 1n+cp),
+             H.hist_len(H.ring_write(acc, v, Nat.mod(tk, 1n+cp)))):
+  b_le(Nat.mod(Nat.add(1n, tk), 1n+cp),
+       H.hist_len(H.ring_write(acc, v, Nat.mod(tk, 1n+cp))),
+       Laws.le_trans(Nat.mod(Nat.add(1n, tk), 1n+cp),
+                     Nat.add(1n, Nat.mod(tk, 1n+cp)),
+                     H.hist_len(H.ring_write(acc, v, Nat.mod(tk, 1n+cp))),
+                     Laws.mod_succ_le(tk, cp),
+                     Laws.ring_write_len_succ(acc, v, Nat.mod(tk, 1n+cp), h)))
+
+# ---- read_window_add (the SHARP window bound) ----
+# sub_zero_sat: when n < d, the saturating sub answers 0 (by joint
+# induction, the over-long witness dying on its own Empty arms).
+def sub_zero_sat(n: Nat, d: Nat, h: R.le_ok(Nat.add(1n, n), d))
+  -> {Nat.sub(n, d) == 0n : Nat}:
+  match n d h:
+    case 0n 0n h:
+      {==}
+    case 0n 1n+q h:
+      {==}
+    case 1n+p 0n h:
+      Empty.absurd({Nat.sub(1n+p, 0n) == 0n : Nat}, h)
+    case 1n+p 1n+q h:
+      sub_zero_sat(p, q, h)
+
+# read_window_add: case on d.  d=0 clamps i0 to n, and 1 + n <= n +
+# horizon is one add_le_mono_r away (1 <= horizon IS the hypothesis).
+# d = 1+dp splits by trichotomy against n: inside (d <= n), the
+# cancellation (n - d) + d == n regroups 1 + n into (n-d) + (d+1),
+# which add_le_mono_r (at d + 1 <= horizon, the hypothesis itself)
+# bounds by (n-d) + horizon; outside (n < d), the sub saturates to 0
+# (sub_zero_sat) and d + 1 <= horizon exceeds n + 1 outright.
+def read_window_add_go(+n: Nat, +d: Nat, +num: Nat, +den: Nat, +win: Nat,
+                       +horizon: Nat,
+                       +h: {Nat.is_le(Nat.add(d, 1n), horizon) == True{} : Bool})
+  -> {Nat.is_le(Nat.add(1n, n),
+                Nat.add(R.l_i0(R.route_read(n, d, num, den, win)),
+                        horizon)) == True{} : Bool}:
+  match d:
+    case 0n:
+      btrans(Nat.is_le(Nat.add(1n, n), Nat.add(n, horizon)),
+             Nat.is_le(Nat.add(n, 1n), Nat.add(n, horizon)),
+             Equal.cong(Nat, Bool, x => Nat.is_le(x, Nat.add(n, horizon)),
+                        Nat.add(1n, n), Nat.add(n, 1n),
+                        Laws.add_comm(1n, n)),
+             Laws.add_le_mono_r(n, 1n, horizon, h))
+    case 1n++dp:
+      nat_cases(1n+dp, n,
+        {Nat.is_le(Nat.add(1n, n),
+                   Nat.add(R.l_i0(R.route_read(n, 1n+dp, num, den, win)),
+                           horizon)) == True{} : Bool},
+        wkle =>
+          btrans(Nat.is_le(Nat.add(1n, n),
+                           Nat.add(Nat.sub(n, 1n+dp), horizon)),
+                 Nat.is_le(Nat.add(Nat.sub(n, 1n+dp), Nat.add(1n+dp, 1n)),
+                           Nat.add(Nat.sub(n, 1n+dp), horizon)),
+                 Equal.cong(Nat, Bool,
+                            x => Nat.is_le(x, Nat.add(Nat.sub(n, 1n+dp), horizon)),
+                            Nat.add(1n, n),
+                            Nat.add(Nat.sub(n, 1n+dp), Nat.add(1n+dp, 1n)),
+                            Equal.trans(Nat,
+                              Nat.add(1n, n),
+                              Nat.add(n, 1n),
+                              Nat.add(Nat.sub(n, 1n+dp), Nat.add(1n+dp, 1n)),
+                              Laws.add_comm(1n, n),
+                              Equal.trans(Nat,
+                                Nat.add(n, 1n),
+                                Nat.add(Nat.add(Nat.sub(n, 1n+dp), 1n+dp), 1n),
+                                Nat.add(Nat.sub(n, 1n+dp), Nat.add(1n+dp, 1n)),
+                                Equal.sym(Nat,
+                                  Nat.add(Nat.add(Nat.sub(n, 1n+dp), 1n+dp), 1n),
+                                  Nat.add(n, 1n),
+                                  Equal.cong(Nat, Nat, x => Nat.add(x, 1n),
+                                             Nat.add(Nat.sub(n, 1n+dp), 1n+dp),
+                                             n,
+                                             Laws.sub_add_cancel(n, 1n+dp,
+                                               Laws.le_ok_iff(1n+dp, n, wkle)))),
+                                Laws.add_assoc(Nat.sub(n, 1n+dp), 1n+dp, 1n)))),
+                 Laws.add_le_mono_r(Nat.sub(n, 1n+dp), Nat.add(1n+dp, 1n),
+                                    horizon, h)),
+        wkgt =>
+          # wkgt is a Type witness used twice (saturation + the succ
+          # step); round-trip it once through the Bool form
+          +wB = Laws.le_ok_iff(Nat.add(1n, n), 1n+dp, wkgt)
+          btrans(Nat.is_le(Nat.add(1n, n),
+                           Nat.add(Nat.sub(n, 1n+dp), horizon)),
+                 Nat.is_le(Nat.add(1n, n), horizon),
+                 Equal.cong(Nat, Bool,
+                            x => Nat.is_le(Nat.add(1n, n), Nat.add(x, horizon)),
+                            Nat.sub(n, 1n+dp), 0n,
+                            sub_zero_sat(n, 1n+dp,
+                                         b_le(Nat.add(1n, n), 1n+dp, wB))),
+                 Laws.le_trans(Nat.add(1n, n), Nat.add(1n+dp, 1n), horizon,
+                   btrans(Nat.is_le(Nat.add(1n, n), Nat.add(1n+dp, 1n)),
+                          Nat.is_le(Nat.add(1n, n), Nat.add(1n, 1n+dp)),
+                          Equal.cong(Nat, Bool, x => Nat.is_le(Nat.add(1n, n), x),
+                                     Nat.add(1n+dp, 1n), Nat.add(1n, 1n+dp),
+                                     Laws.add_comm(1n+dp, 1n)),
+                          Laws.le_succ_of_le(Nat.add(1n, n), 1n+dp, wB)),
+                   h)))
+
+def Laws.read_window_add(n, d, num, den, win, horizon, h):
+  read_window_add_go(n, d, num, den, win, horizon, h)
+
+# ---- routing_window_add: the sharp bound at tick state ----
+# Same two-level structure as routing_in_window: ps/i peeling at t=0
+# (the head needs only the fold's head conjunct, via proj_delay_fits),
+# t-induction above it.
+def routing_window_add_nil(+nlanes: Nat, +horizon: Nat, +ls: List<&2, R.Lane>,
+                           ps: List<&2, R.Proj>, i: Nat,
+                           h: R.lt_ok(i, R.projs_len(ps)),
+                           +hok: {R.projs_shape_ok(nlanes, horizon, ps) == True{} : Bool})
+  -> {Nat.is_le(Nat.add(1n,
+                        R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(0n, ls, ps)),
+                                                 R.proj_src(R.nth_proj(ps, i))))),
+                Nat.add(R.l_i0(R.nth_line(R.tick_lines(R.ticks(0n, ls, ps)), i)),
+                        horizon)) == True{} : Bool}:
+  match ps i h:
+    case Nil{} _ h:
+      Empty.absurd({Nat.is_le(Nat.add(1n,
+                                      R.lane_newest(R.nth_lane(ls,
+                                        R.proj_src(R.nth_proj(Nil{}, i))))),
+                                      Nat.add(R.l_i0(R.nth_line(R.route_all(ls, Nil{}), i)),
+                                              horizon)) == True{} : Bool},
+                   lt_ok_nil_absurd(i, h))
+    case +p <> +t 0n _:
+      Laws.read_window_add(R.lane_newest(R.nth_lane(ls, R.proj_src(p))),
+                           R.proj_d(p),
+                           R.lane_num(R.nth_lane(ls, R.proj_src(p))),
+                           R.lane_k(R.nth_lane(ls, R.proj_src(p))),
+                           R.proj_win(p), horizon,
+                           Laws.proj_delay_fits(nlanes, horizon, p,
+                                           and_elim_l_go(R.proj_shape_ok(nlanes, horizon, p),
+                                                         R.projs_shape_ok(nlanes, horizon, t),
+                                                         hok)))
+    case p <> t 1n+q hlt:
+      routing_window_add_nil(nlanes, horizon, ls, t, q, hlt,
+                             and_elim_r_go(R.proj_shape_ok(nlanes, horizon, p),
+                                           R.projs_shape_ok(nlanes, horizon, t),
+                                           hok))
+
+def routing_window_add_tick_go(+nlanes: Nat, +horizon: Nat, t: Nat,
+                               +ls: List<&2, R.Lane>, +ps: List<&2, R.Proj>,
+                               i: Nat, hb: R.lt_ok(i, R.projs_len(ps)),
+                               +hok: {R.projs_shape_ok(nlanes, horizon, ps) == True{} : Bool})
+  -> {Nat.is_le(Nat.add(1n,
+                        R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                 R.proj_src(R.nth_proj(ps, i))))),
+                Nat.add(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                        horizon)) == True{} : Bool}:
+  match t:
+    case 0n:
+      routing_window_add_nil(nlanes, horizon, ls, ps, i, hb, hok)
+    case 1n+q:
+      routing_window_add_tick_go(nlanes, horizon, q, R.tick_lanes(R.tick(ls, ps)),
+                                 ps, i, hb, hok)
+
+def Laws.routing_window_add(nlanes, horizon, ls, ps, t, i, hb, hok):
+  routing_window_add_tick_go(nlanes, horizon, t, ls, ps, i, hb, hok)
+
+# ---- ring_correspondence: the fold-stability lemma and the go-induction ----
+#
+# fold_stable_go: the fold over xs starting at tick tk2 does not disturb
+# the read at the guarded slot mod(m, cap).  Invariants: heq (tk2 ==
+# m + d, d the current write-tick's distance from the guarded tick m),
+# hbd (len(xs) + d <= 1 + cp: every remaining write is within a lap of
+# m), hd1 (1 <= d), hwinv (the accumulator invariant: the write at
+# tk2's slot is within the accumulator's length).  The step: the head's
+# write at slot mod(tk2, cap) differs from the guarded slot
+# (mod_inj_lap at distance d, transported across heq), so
+# ring_write_stable keeps the guarded read; the tail recurses with all
+# four invariants advanced (hwinv_step for the length, add_succ for the
+# tick/distance regrouping).
+def fold_stable_go(+xs: List<&2, F32>, +cp: Nat, +tk2: Nat, +m: Nat, +d: Nat,
+                   +acc: List<&2, F32>, +ic: F32,
+                   +heq: {Nat.add(m, d) == tk2 : Nat},
+                   hbd: R.le_ok(Nat.add(H.hist_len(xs), d), 1n+cp),
+                   hd1: R.le_ok(1n, d),
+                   hwinv: R.le_ok(Nat.mod(tk2, 1n+cp), H.hist_len(acc)))
+  -> {H.hist_read(H.ring_of_go(xs, 1n+cp, tk2, acc), Nat.mod(m, 1n+cp), ic)
+      == H.hist_read(acc, Nat.mod(m, 1n+cp), ic) : F32}:
+  match xs:
+    case Nil{}:
+      {==}
+    case hh <> tt:
+      # the Type witnesses hbd/hwinv are each used twice (extraction +
+      # advancement): round-trip once through the Bool form
+      +hbdB = Laws.le_ok_iff(Nat.add(H.hist_len(tt), d), cp, hbd)
+      +hwinvB = Laws.le_ok_iff(Nat.mod(tk2, 1n+cp), H.hist_len(acc), hwinv)
+      # the per-write distance bound d <= cp (from len(tt) + d <= cp and
+      # d <= len(tt) + d)
+      h2 = Laws.le_trans(d, Nat.add(H.hist_len(tt), d), cp,
+        btrans(Nat.is_le(d, Nat.add(H.hist_len(tt), d)),
+               Nat.is_le(d, Nat.add(d, H.hist_len(tt))),
+               Equal.cong(Nat, Bool, x => Nat.is_le(d, x),
+                          Nat.add(H.hist_len(tt), d),
+                          Nat.add(d, H.hist_len(tt)),
+                          Laws.add_comm(H.hist_len(tt), d)),
+               le_add_r(d, H.hist_len(tt))),
+        hbdB)
+      # the write at tick tk2 hits a different slot than mod(m, cap)
+      hne = ne_symm(Nat.mod(tk2, 1n+cp), Nat.mod(m, 1n+cp),
+        btrans(Nat.is_ne(Nat.mod(tk2, 1n+cp), Nat.mod(m, 1n+cp)),
+               Nat.is_ne(Nat.mod(Nat.add(m, d), 1n+cp), Nat.mod(m, 1n+cp)),
+               Equal.cong(Nat, Bool, x => Nat.is_ne(Nat.mod(x, 1n+cp),
+                                                    Nat.mod(m, 1n+cp)),
+                          tk2, Nat.add(m, d),
+                          Equal.sym(Nat, Nat.add(m, d), tk2, heq)),
+               Laws.mod_inj_lap(m, d, cp,
+                                Laws.le_ok_iff(1n, d, hd1), h2)))
+      Equal.trans(F32,
+        H.hist_read(H.ring_of_go(tt, 1n+cp, Nat.add(1n, tk2),
+                                 H.ring_write(acc, hh, Nat.mod(tk2, 1n+cp))),
+                    Nat.mod(m, 1n+cp), ic),
+        H.hist_read(H.ring_write(acc, hh, Nat.mod(tk2, 1n+cp)),
+                    Nat.mod(m, 1n+cp), ic),
+        H.hist_read(acc, Nat.mod(m, 1n+cp), ic),
+        fold_stable_go(tt, cp, Nat.add(1n, tk2), m, Nat.add(1n, d),
+                       H.ring_write(acc, hh, Nat.mod(tk2, 1n+cp)), ic,
+          Equal.trans(Nat, Nat.add(m, Nat.add(1n, d)),
+            1n+Nat.add(m, d), Nat.add(1n, tk2),
+            Laws.add_succ(m, d),
+            Equal.cong(Nat, Nat, x => Nat.add(1n, x),
+                       Nat.add(m, d), tk2, heq)),
+          b_le(Nat.add(H.hist_len(tt), Nat.add(1n, d)), 1n+cp,
+            btrans(Nat.is_le(Nat.add(H.hist_len(tt), Nat.add(1n, d)), 1n+cp),
+                   Nat.is_le(Nat.add(H.hist_len(tt), d), cp),
+                   Equal.trans(Bool,
+                     Nat.is_le(Nat.add(H.hist_len(tt), Nat.add(1n, d)), 1n+cp),
+                     Nat.is_le(Nat.add(1n, Nat.add(H.hist_len(tt), d)), 1n+cp),
+                     Nat.is_le(Nat.add(H.hist_len(tt), d), cp),
+                     Equal.cong(Nat, Bool, x => Nat.is_le(x, 1n+cp),
+                                Nat.add(H.hist_len(tt), Nat.add(1n, d)),
+                                Nat.add(1n, Nat.add(H.hist_len(tt), d)),
+                                Laws.add_succ(H.hist_len(tt), d)),
+                     {==}),
+                   hbdB)),
+          Unit{},
+          hwinv_step(cp, tk2, acc, hh,
+                     b_le(Nat.mod(tk2, 1n+cp), H.hist_len(acc), hwinvB))),
+        Laws.ring_write_stable(acc, hh, ic, Nat.mod(m, 1n+cp),
+                               Nat.mod(tk2, 1n+cp), hne,
+                               b_le(Nat.mod(tk2, 1n+cp), H.hist_len(acc),
+                                    hwinvB)))
+
+# ring_corr_go: the generalized correspondence.  The tape peels from the
+# FRONT while the read's ABSOLUTE tick j = tk + off stays fixed: off
+# peels with the tape, the window witnesses (lt_ok(off, len) and
+# le_ok(len, off + cap)) peel one successor each, and the accumulator
+# invariant advances by hwinv_step.  off = 0 is the head case: the fold
+# has just written the head at slot mod(tk, cap) (write-read, witness
+# hwinv) and the remaining fold cannot disturb that slot (fold_stable,
+# lap bound len(t) <= cp from the window witness at off = 0).
+def ring_corr_go(+xs: List<&2, F32>, +cp: Nat, +tk: Nat, +acc: List<&2, F32>,
+                 +ic: F32, off: Nat,
+                 hj: R.lt_ok(off, H.hist_len(xs)),
+                 hw: R.le_ok(H.hist_len(xs), Nat.add(off, 1n+cp)),
+                 hwinv: R.le_ok(Nat.mod(tk, 1n+cp), H.hist_len(acc)))
+  -> {H.hist_read(H.ring_of_go(xs, 1n+cp, tk, acc),
+                  Nat.mod(Nat.add(tk, off), 1n+cp), ic)
+      == H.hist_read(xs, off, ic) : F32}:
+  match xs off:
+    case Nil{} 0n:
+      Empty.absurd({H.hist_read(H.ring_of_go(Nil{}, 1n+cp, tk, acc),
+                                Nat.mod(Nat.add(tk, 0n), 1n+cp), ic)
+                    == H.hist_read(Nil{}, 0n, ic) : F32},
+                   lt_ok_nil_absurd(off, hj))
+    case Nil{} 1n+q:
+      Empty.absurd({H.hist_read(H.ring_of_go(Nil{}, 1n+cp, tk, acc),
+                                Nat.mod(Nat.add(tk, 1n+q), 1n+cp), ic)
+                    == H.hist_read(Nil{}, 1n+q, ic) : F32},
+                   lt_ok_nil_absurd(off, hj))
+    case h <> t 0n:
+      # hwinv is used twice (write-read + the fold's invariant): Bool it
+      +hwinvB = Laws.le_ok_iff(Nat.mod(tk, 1n+cp), H.hist_len(acc), hwinv)
+      # the fold's lap bound, from the window witness at off = 0:
+      # len(t) <= cp (hw peels to exactly that)
+      hbd0 = b_le(Nat.add(H.hist_len(t), 1n), 1n+cp,
+        btrans(Nat.is_le(Nat.add(H.hist_len(t), 1n), 1n+cp),
+               Nat.is_le(H.hist_len(t), cp),
+               Equal.trans(Bool,
+                 Nat.is_le(Nat.add(H.hist_len(t), 1n), 1n+cp),
+                 Nat.is_le(Nat.add(1n, H.hist_len(t)), 1n+cp),
+                 Nat.is_le(H.hist_len(t), cp),
+                 Equal.cong(Nat, Bool, x => Nat.is_le(x, 1n+cp),
+                            Nat.add(H.hist_len(t), 1n),
+                            Nat.add(1n, H.hist_len(t)),
+                            Laws.add_one(H.hist_len(t))),
+                 {==}),
+               Laws.le_ok_iff(H.hist_len(t), cp, hw)))
+      Equal.trans(F32,
+        H.hist_read(H.ring_of_go(t, 1n+cp, Nat.add(1n, tk),
+                                 H.ring_write(acc, h, Nat.mod(tk, 1n+cp))),
+                    Nat.mod(Nat.add(tk, 0n), 1n+cp), ic),
+        H.hist_read(H.ring_of_go(t, 1n+cp, Nat.add(1n, tk),
+                                 H.ring_write(acc, h, Nat.mod(tk, 1n+cp))),
+                    Nat.mod(tk, 1n+cp), ic),
+        h,
+        Equal.cong(Nat, F32,
+          z => H.hist_read(H.ring_of_go(t, 1n+cp, Nat.add(1n, tk),
+                           H.ring_write(acc, h, Nat.mod(tk, 1n+cp))), z, ic),
+          Nat.mod(Nat.add(tk, 0n), 1n+cp), Nat.mod(tk, 1n+cp),
+          Equal.cong(Nat, Nat, z => Nat.mod(z, 1n+cp),
+                     Nat.add(tk, 0n), tk, Laws.add_zero(tk))),
+        Equal.trans(F32,
+          H.hist_read(H.ring_of_go(t, 1n+cp, Nat.add(1n, tk),
+                                   H.ring_write(acc, h, Nat.mod(tk, 1n+cp))),
+                      Nat.mod(tk, 1n+cp), ic),
+          H.hist_read(H.ring_write(acc, h, Nat.mod(tk, 1n+cp)),
+                      Nat.mod(tk, 1n+cp), ic),
+          h,
+          fold_stable_go(t, cp, Nat.add(1n, tk), tk, 1n,
+                         H.ring_write(acc, h, Nat.mod(tk, 1n+cp)), ic,
+            Laws.add_comm(tk, 1n),
+            hbd0,
+            Unit{},
+            hwinv_step(cp, tk, acc, h,
+                       b_le(Nat.mod(tk, 1n+cp), H.hist_len(acc), hwinvB))),
+          Laws.ring_write_read(acc, h, ic, Nat.mod(tk, 1n+cp),
+                               b_le(Nat.mod(tk, 1n+cp), H.hist_len(acc),
+                                    hwinvB))))
+    case h <> t 1n++q:
+      Equal.trans(F32,
+        H.hist_read(H.ring_of_go(t, 1n+cp, Nat.add(1n, tk),
+                                 H.ring_write(acc, h, Nat.mod(tk, 1n+cp))),
+                    Nat.mod(Nat.add(tk, 1n+q), 1n+cp), ic),
+        H.hist_read(H.ring_of_go(t, 1n+cp, Nat.add(1n, tk),
+                                 H.ring_write(acc, h, Nat.mod(tk, 1n+cp))),
+                    Nat.mod(Nat.add(Nat.add(1n, tk), q), 1n+cp), ic),
+        H.hist_read(t, q, ic),
+        Equal.cong(Nat, F32,
+          z => H.hist_read(H.ring_of_go(t, 1n+cp, Nat.add(1n, tk),
+                           H.ring_write(acc, h, Nat.mod(tk, 1n+cp))), z, ic),
+          Nat.mod(Nat.add(tk, 1n+q), 1n+cp),
+          Nat.mod(Nat.add(Nat.add(1n, tk), q), 1n+cp),
+          Equal.cong(Nat, Nat, z => Nat.mod(z, 1n+cp),
+                     Nat.add(tk, 1n+q), Nat.add(Nat.add(1n, tk), q),
+                     Laws.add_succ(tk, q))),
+        ring_corr_go(t, cp, Nat.add(1n, tk),
+                     H.ring_write(acc, h, Nat.mod(tk, 1n+cp)), ic, q,
+                     hj, hw,
+                     hwinv_step(cp, tk, acc, h, hwinv)))
+
+# cap = 0 is vacuous: len <= j + 0 and j < len contradict.  The tape and
+# j peel together, each case dying on its own witness.
+def ring_corr_cap0(tape: List<&2, F32>, j: Nat,
+                   hj: R.lt_ok(j, H.hist_len(tape)),
+                   hw: R.le_ok(H.hist_len(tape), Nat.add(j, 0n))) -> Empty:
+  match tape j:
+    case Nil{} 0n:
+      hj
+    case Nil{} 1n+q:
+      hj
+    case h <> t 0n:
+      hw
+    case h <> t 1n+q:
+      ring_corr_cap0(t, q, hj, hw)
+
+def Laws.ring_correspondence(tape, cap, ic, j, hj, hw):
+  match cap:
+    case 0n:
+      Empty.absurd({H.ring_read(H.ring_of(tape, 0n), j, 0n, ic)
+                    == H.hist_read(tape, j, ic) : F32},
+                   ring_corr_cap0(tape, j, hj, hw))
+    case 1n+cp:
+      ring_corr_go(tape, cp, 0n, Nil{}, ic, j, hj, hw, Unit{})
+
+# x <= p lifts across a successor on BOTH sides: x+1 <= 1+p.  The
+# le_lt_succ form gives x < 1+p; the ring's live-window witness wants
+# the le form with the successors explicit on both sides (lt_ok is
+# le_ok of j+1 against the tape length, tied to 1+newest).
+def le_add_succ_both(x: Nat, p: Nat, h: {Nat.is_le(x, p) == True{} : Bool})
+    -> {Nat.is_le(Nat.add(x, 1n), Nat.add(1n, p)) == True{} : Bool}:
+  match x p:
+    case 0n 0n:
+      {==}
+    case 0n 1n+s:
+      {==}
+    case 1n+r 0n:
+      Bool.fne({Nat.is_le(Nat.add(1n+r, 1n), Nat.add(1n, 0n)) == True{} : Bool}, h)
+    case 1n+r 1n+s:
+      le_add_succ_both(r, s, h)
+
+# ---- memory_contract: the composed capstone ----
+# The endpoint j = i0 of the routed line lies inside the tape's live
+# window: below, j <= i1 <= newest (ordered + fresh), and newest < len
+# by the tape tie; above, the sharp window bound (routing_window_add)
+# gives 1 + newest <= j + horizon, ok_cap's horizon <= cap lifts it to
+# 1 + newest <= j + cap (add_le_mono_r), and the tape tie rewrites it
+# to len <= j + cap.  ring_correspondence then delivers the slot's leaf.
+def Laws.memory_contract(c, cap, tape, ic, ls, ps, t, i, h, hcap, hls, hps, hb,
+                         htape):
+  # hb (Type witness) is used by three lemmas: Bool it once
+  +hbB = Laws.le_ok_iff(Nat.add(i, 1n), R.projs_len(ps), hb)
+  hok_ps = btrans(R.projs_shape_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c), ps),
+                  R.projs_shape_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c),
+                                   R.cfg_projs(c)),
+                  Equal.cong(List<&2, R.Proj>, Bool,
+                    xs => R.projs_shape_ok(R.nats_len(R.cfg_lanes(c)),
+                                           R.cfg_horizon(c), xs),
+                    ps, R.cfg_projs(c), hps),
+                  Laws.ok_projs(c, h))
+  # j <= i1 <= newest
+  hle = Laws.le_trans(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                      R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                      R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                               R.proj_src(R.nth_proj(ps, i)))),
+                      Laws.routing_ordered(ls, ps, t, i,
+                        b_le(Nat.add(i, 1n), R.projs_len(ps), hbB)),
+                      Laws.read_fresh_ticks(ls, ps, t, i,
+                        b_le(Nat.add(i, 1n), R.projs_len(ps), hbB)))
+  # the live window's upper end: j + 1 <= len (via the tie)
+  hj = b_le(Nat.add(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)), 1n),
+            H.hist_len(tape),
+    btrans(Nat.is_le(Nat.add(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)), 1n),
+                     H.hist_len(tape)),
+           Nat.is_le(Nat.add(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)), 1n),
+                     Nat.add(1n, R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                          R.proj_src(R.nth_proj(ps, i)))))),
+           Equal.cong(Nat, Bool, x => Nat.is_le(Nat.add(R.l_i0(R.nth_line(
+                        R.tick_lines(R.ticks(t, ls, ps)), i)), 1n), x),
+                      H.hist_len(tape),
+                      Nat.add(1n, R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                           R.proj_src(R.nth_proj(ps, i))))),
+                      htape),
+           le_add_succ_both(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                      R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                               R.proj_src(R.nth_proj(ps, i)))),
+                      hle)))
+  # the live window's lower end: len <= j + cap (sharp bound + ok_cap)
+  hw = b_le(H.hist_len(tape),
+            Nat.add(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)), cap),
+    btrans(Nat.is_le(H.hist_len(tape),
+                     Nat.add(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)), cap)),
+           Nat.is_le(Nat.add(1n, R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                R.proj_src(R.nth_proj(ps, i))))),
+                     Nat.add(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)), cap)),
+           Equal.cong(Nat, Bool, x => Nat.is_le(x,
+                        Nat.add(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)), cap)),
+                      H.hist_len(tape),
+                      Nat.add(1n, R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                           R.proj_src(R.nth_proj(ps, i))))),
+                      htape),
+           Laws.le_trans(Nat.add(1n, R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                    R.proj_src(R.nth_proj(ps, i))))),
+                         Nat.add(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                                 R.cfg_horizon(c)),
+                         Nat.add(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)), cap),
+                         Laws.routing_window_add(R.nats_len(R.cfg_lanes(c)),
+                                                 R.cfg_horizon(c), ls, ps, t, i,
+                                                 b_le(Nat.add(i, 1n), R.projs_len(ps), hbB),
+                                                 hok_ps),
+                         Laws.add_le_mono_r(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                                            R.cfg_horizon(c), cap,
+                                            Laws.ok_cap_le(c, cap, hcap)))))
+  Laws.ring_correspondence(tape, cap, ic,
+                           R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                           hj, hw)
