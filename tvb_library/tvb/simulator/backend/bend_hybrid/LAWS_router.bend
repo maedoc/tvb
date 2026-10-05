@@ -1323,6 +1323,127 @@ law ring_first_lap:
   {H.ring_read(xs, i, cap, ic) == H.hist_read(xs, i, ic) : F32}
 
 # --------------------------------------------------------------------------
+# 6f. the ring write path (Phase 1): the engine's memory, as functions
+# --------------------------------------------------------------------------
+# memory_contract (section 8) pins H.ring_of / the ring write path as the
+# IMPLEMENTATION half of the Design A / Design B split.  The engine writes
+# each published sample at slot tick mod cap, so the ring holds, at slot
+# s, the sample of the NEWEST tick congruent to s mod cap -- each later
+# tick overwrites its slot.  The write laws here are the bricks the
+# correspondence theorem composes: read-after-write, stability (slot and
+# tick form -- the tick form is where the divmod family's no-clobber law
+# mod_inj_lap is consumed), first-lap agreement, and the pinned instance
+# that documents the wrap semantics.  (Section numbered 6f because it
+# completes the 6b ring story; it sits with its siblings.)
+# --------------------------------------------------------------------------
+
+# the tape grows by exactly one per append -- the length twin of
+# hist_read_snoc, and the invariant the ring fold's accumulator carries.
+law hist_len_snoc:
+  for +xs: List<&2, F32>
+  for +v: F32
+  {H.hist_len(H.hist_snoc(xs, v)) == 1n+H.hist_len(xs) : Nat}
+
+# the EXTENSION write is the tape append: writing at the top slot (s = the
+# current length, the case every first-lap tick-order write hits) appends.
+# The numpy gloss: buf[len(buf)] = v is a push.
+law ring_write_snoc:
+  for +xs: List<&2, F32>
+  for +v: F32
+  {H.ring_write(xs, v, H.hist_len(xs)) == H.hist_snoc(xs, v) : List<&2, F32>}
+
+# write-read, slot form: reading the written slot returns the value.  The
+# witness covers both cases at once: s = len is the extension, s < len the
+# overwrite.  The numpy gloss: buf[s] = v; buf[s] == v.
+law ring_write_read:
+  for +xs: List<&2, F32>
+  for +v: F32
+  for +ic: F32
+  for s: Nat
+  for h: R.le_ok(s, H.hist_len(xs))
+  {H.hist_read(H.ring_write(xs, v, s), s, ic) == v : F32}
+
+# write-stability, slot form: a write at slot w (w <= len, overwrite or
+# extension) does not disturb a read at any OTHER slot.  The numpy gloss:
+# writing one ring slot cannot retroactively alter another.  This is the
+# brick the tick form below composes with the divmod family.
+law ring_write_stable:
+  for +xs: List<&2, F32>
+  for +v: F32
+  for +ic: F32
+  for i: Nat
+  for w: Nat
+  for +hne: {Nat.is_ne(i, w) == True{} : Bool}
+  for hw: R.le_ok(w, H.hist_len(xs))
+  {H.hist_read(H.ring_write(xs, v, w), i, ic)
+    == H.hist_read(xs, i, ic) : F32}
+
+# write-stability, TICK form -- THE consumer of mod_inj_lap: on a FULL
+# ring (len >= cap, i.e. past the first lap, which is exactly when the
+# wrap can bite), publishing the sample of tick i+t (1 <= t <= cp, the
+# 1n+cp convention of section 7b) does not disturb the read at absolute
+# tick i: mod_inj_lap says the write's slot differs from i's slot, and the
+# slot form above says the write leaves that slot's read alone.  An
+# under-capacity ring (bad_cap) violates exactly this chain: there, two
+# ticks a horizon apart DO share a slot.
+law ring_snoc_stable:
+  for +ring: List<&2, F32>
+  for +v: F32
+  for +ic: F32
+  for +i: Nat
+  for +t: Nat
+  for +cp: Nat
+  for hfull: R.le_ok(1n+cp, H.hist_len(ring))
+  for +h1: {Nat.is_le(1n, t) == True{} : Bool}
+  for +h2: {Nat.is_le(t, cp) == True{} : Bool}
+  {H.ring_read(H.ring_snoc(ring, v, Nat.add(i, t), 1n+cp), i, 1n+cp, ic)
+    == H.ring_read(ring, i, 1n+cp, ic) : F32}
+
+# first-lap agreement: while the tape is SHORTER than the ring's capacity
+# (len <= cap) the fold IS the tape, tick for tick -- every first-lap
+# write lands at slot = the accumulator's length, i.e. is an append
+# (ring_write_snoc).  The de-risking law for Phase 2: whatever the tape
+# laws guarantee, ring_of delivers structurally while the fence covers
+# the whole tape.
+law ring_of_first_lap:
+  for +xs: List<&2, F32>
+  for +cap: Nat
+  for h: R.le_ok(H.hist_len(xs), cap)
+  {H.ring_of(xs, cap) == xs : List<&2, F32>}
+
+# the pinned instance (the csr_ok_good lesson: instance laws are
+# load-bearing).  A 5-sample tape over cap 4: ticks 0..4 write slots
+# 0,1,2,3,0 -- tick 4 OVERWRITES tick 0's slot, so the ring is e <> b <>
+# c <> d over the tape a <> b <> c <> d <> e: slot s holds the newest tick
+# congruent to s mod cap.
+law ring_of_good_4:
+  {H.ring_of(1.0 <> 2.0 <> 3.0 <> 4.0 <> 5.0 <> Nil{}, 4n)
+    == 5.0 <> 2.0 <> 3.0 <> 4.0 <> Nil{} : List<&2, F32>}
+
+# the live window, pinned: a read at the window's oldest tick (tick 1 of
+# [len-cap, len-1] = [1,4]) delivers the tape's own sample -- exactly the
+# memory_contract claim for endpoints in the live window.
+law ring_read_live_good_4:
+  {H.ring_read(H.ring_of(1.0 <> 2.0 <> 3.0 <> 4.0 <> 5.0 <> Nil{}, 4n),
+               1n, 4n, 9.0)
+    == 2.0 : F32}
+
+# the stale tick, pinned: tick 0 (one lap behind the live window) does
+# NOT read back its own sample -- slot 0 now holds tick 4's.  The live
+# window starts at len-cap; anything older is gone, by design.
+law ring_read_stale_good_4:
+  {H.ring_read(H.ring_of(1.0 <> 2.0 <> 3.0 <> 4.0 <> 5.0 <> Nil{}, 4n),
+               0n, 4n, 9.0)
+    == 5.0 : F32}
+
+# TARGET (Phase 2): the fold agreement
+#   ring_of(hist_snoc(xs, v), cap) == ring_snoc(ring_of(xs, cap), v, len, cap)
+# -- the law that makes the engine's per-tick op honest against the fold.
+# The write SEQUENCES are identical, so the claim holds semantically; the
+# proof needs a go-lemma plus a mod-commutation brick (add_swap_one's
+# shape).  Left for Phase 2, after the contract statements uncomment.
+
+# --------------------------------------------------------------------------
 # 6c. the blend wiring: the interpolation's endpoints are the routed cells
 # --------------------------------------------------------------------------
 # The kernel leaf turns a routed Line into a value:

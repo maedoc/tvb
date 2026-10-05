@@ -66,3 +66,41 @@ def hist_drop(xs: List<&2, F32>, k: Nat) -> List<&2, F32>:
 # The fence is where the deferred div/mod debt gets paid, once, here.
 def ring_read(xs: List<&2, F32>, i: Nat, +cap: Nat, +ic: F32) -> F32:
   hist_read(xs, Nat.mod(i, cap), ic)
+
+# ring_write: the slot update -- the ENGINE side of the bridge.  Overwrite
+# slot s if the ring reaches it, else extend: tick-order writes hit s = len
+# exactly on the first lap, so extension is append (the extension case is
+# ring_write_snoc in the laws).  The Nil arm ignores s -- past the end the
+# write appends once, which keeps the def total (a tick-order caller never
+# reaches it with s > 0).
+def ring_write(xs: List<&2, F32>, +v: F32, s: Nat) -> List<&2, F32>:
+  match xs s:
+    case Nil{} _:
+      v <> Nil{}
+    case h <> t 0n:
+      v <> t
+    case h <> t 1n+p:
+      h <> ring_write(t, v, p)
+
+# ring_snoc: the engine-facing per-publish write: the sample of absolute
+# tick `tick` lands at slot tick mod cap (the write the router's write
+# uniqueness family guards: two lanes never publish the same tick).
+def ring_snoc(xs: List<&2, F32>, +v: F32, +tick: Nat, +cap: Nat) -> List<&2, F32>:
+  ring_write(xs, v, Nat.mod(tick, cap))
+
+# ring_of: the tape-to-ring fold -- the correspondence theorem's
+# implementation half (memory_contract names it).  Write tick i's sample
+# at slot i mod cap, ticks in order, ACCUMULATOR form so the later (newer)
+# tick wins a slot clash: slot s ends holding the sample of the newest
+# tick congruent to s mod cap, and a full first lap fills the slots in
+# tick order.
+def ring_of_go(xs: List<&2, F32>, +cap: Nat, +tick: Nat,
+               +acc: List<&2, F32>) -> List<&2, F32>:
+  match xs:
+    case Nil{}:
+      acc
+    case h <> t:
+      ring_of_go(t, cap, 1n+tick, ring_write(acc, h, Nat.mod(tick, cap)))
+
+def ring_of(xs: List<&2, F32>, +cap: Nat) -> List<&2, F32>:
+  ring_of_go(xs, cap, 0n, Nil{})

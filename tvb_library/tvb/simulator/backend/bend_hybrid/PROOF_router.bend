@@ -3092,3 +3092,273 @@ def Laws.mod_inj_lap(i, t, cp, h1, h2):
                          Pair.snd(Nat, Nat, mm(i, cp, 0n))), cp,
                  suminv(i, cp, 0n, cp, Laws.add_zero(cp))),
                h2))))
+
+# --------------------------------------------------------------------------
+# 6f. the ring write path: hist_len_snoc, ring_write_snoc, ring_write_read,
+#     ring_write_stable, ring_snoc_stable, ring_of_first_lap, the instances
+# --------------------------------------------------------------------------
+# The write laws of section 6f, in dependency order: the two bricks first
+# (the tape's length twin, the extension write), then the slot laws (an
+# induction on the list with the witness refining), then the tick form
+# (pure composition: mod_inj_lap + the slot form + the length chain),
+# then the fold (a go-lemma with an accumulator invariant, two small
+# Bool-form sum converters so the fence witness stays reusable, and an
+# append helper), then the pinned instances by normalisation.
+
+# hist_len_snoc: the tape grows by exactly one.  Both sides peel one
+# successor per cons; the cons case is the IH under a successor.
+def hist_len_snoc_go(+xs: List<&2, F32>, +v: F32)
+  -> {H.hist_len(H.hist_snoc(xs, v)) == 1n+H.hist_len(xs) : Nat}:
+  match xs:
+    case Nil{}:
+      {==}
+    case h <> t:
+      %hist_len_snoc_go(t, v)
+        : {1n+H.hist_len(H.hist_snoc(t, v)) == 1n+_ : Nat}
+      {==}
+
+def Laws.hist_len_snoc(xs, v):
+  hist_len_snoc_go(xs, v)
+
+# ring_write_snoc: the extension write is the append.  The Nil case is
+# definitional (both sides are the singleton); the cons case peels one
+# successor on both sides -- the slot steps into the tail while the snoc
+# rebuilds the head.
+def ring_write_snoc_go(+xs: List<&2, F32>, +v: F32)
+  -> {H.ring_write(xs, v, H.hist_len(xs)) == H.hist_snoc(xs, v)
+      : List<&2, F32>}:
+  match xs:
+    case Nil{}:
+      {==}
+    case h <> t:
+      %ring_write_snoc_go(t, v)
+        : {h <> H.ring_write(t, v, H.hist_len(t)) == h <> _ : List<&2, F32>}
+      {==}
+
+def Laws.ring_write_snoc(xs, v):
+  ring_write_snoc_go(xs, v)
+
+# 1n+p <= 0 is Empty once p is destructed (either shape of p reduces the
+# le_ok match) -- the Nil-tape absurdity the write laws' witnesses need.
+def le_succ_zero_absurd(p: Nat, h: R.le_ok(1n+p, 0n)) -> Empty:
+  match p h:
+    case 0n h:
+      h
+    case 1n+q h:
+      h
+
+# ring_write_read: induction on xs, the witness refining with the slot.
+# Nil forces s = 0n (le_ok(1+p, 0) is Empty); s = 0 is the definitional
+# overwrite; s = 1+p descends into the tail with the refined witness.
+def ring_write_read_go(+xs: List<&2, F32>, +v: F32, +ic: F32, s: Nat,
+                       h: R.le_ok(s, H.hist_len(xs)))
+  -> {H.hist_read(H.ring_write(xs, v, s), s, ic) == v : F32}:
+  match xs s h:
+    case Nil{} 0n _:
+      {==}
+    case Nil{} 1n+p h:
+      Empty.absurd({H.hist_read(H.ring_write(Nil{}, v, 1n+p), 1n+p, ic)
+                    == v : F32},
+                   le_succ_zero_absurd(p, h))
+    case h <> t 0n _:
+      {==}
+    case h <> t 1n+p h:
+      ring_write_read_go(t, v, ic, p, h)
+
+def Laws.ring_write_read(xs, v, ic, s, h):
+  ring_write_read_go(xs, v, ic, s, h)
+
+# ring_write_stable: induction on xs, peeling (i, w) in lockstep so the
+# disequality decider refines with them.  i = w is refuted by the decider
+# (is_ne computes False on equal heads); a write at w = 0 keeps the head
+# (reads below never see it); a write at w >= 1 keeps every head it
+# passes -- the recursion.  No bound on i is needed: past the end both
+# sides answer the IC fill, so only the write's slot needs the witness.
+def ring_write_stable_go(+xs: List<&2, F32>, +v: F32, +ic: F32,
+                         i: Nat, w: Nat,
+                         hne: {Nat.is_ne(i, w) == True{} : Bool},
+                         hw: R.le_ok(w, H.hist_len(xs)))
+  -> {H.hist_read(H.ring_write(xs, v, w), i, ic)
+      == H.hist_read(xs, i, ic) : F32}:
+  match xs i w hne hw:
+    case Nil{} 0n 0n hne _:
+      Bool.fne({H.hist_read(H.ring_write(Nil{}, v, 0n), 0n, ic)
+                == H.hist_read(Nil{}, 0n, ic) : F32}, hne)
+    case Nil{} 1n+p 0n hne _:
+      {==}
+    case Nil{} _ 1n+q hne hw:
+      Empty.absurd({H.hist_read(H.ring_write(Nil{}, v, 1n+q), i, ic)
+                    == H.hist_read(Nil{}, i, ic) : F32},
+                   le_succ_zero_absurd(q, hw))
+    case h <> t 0n 0n hne _:
+      Bool.fne({H.hist_read(H.ring_write(h <> t, v, 0n), 0n, ic)
+                == H.hist_read(h <> t, 0n, ic) : F32}, hne)
+    case h <> t 0n 1n+q hne _:
+      {==}
+    case h <> t 1n+p 0n hne _:
+      {==}
+    case h <> t 1n+p 1n+q hne hw:
+      ring_write_stable_go(t, v, ic, p, q, hne, hw)
+
+def Laws.ring_write_stable(xs, v, ic, i, w, hne, hw):
+  ring_write_stable_go(xs, v, ic, i, w, hne, hw)
+
+# ring_snoc_stable: pure composition.  ring_read/ring_snoc unfold to the
+# slot forms definitionally, so the goal IS the slot-form stability at
+# slots mod(i, cap) vs mod(i+t, cap); mod_inj_lap supplies the
+# disequality decider, and the length chain (mod_bound, the full-ring
+# witness weakened by one, le_trans, b_le) supplies the write's bounds
+# witness.
+def Laws.ring_snoc_stable(ring, v, ic, i, t, cp, hfull, h1, h2):
+  Laws.ring_write_stable(ring, v, ic, Nat.mod(i, 1n+cp),
+    Nat.mod(Nat.add(i, t), 1n+cp),
+    ne_symm(Nat.mod(Nat.add(i, t), 1n+cp), Nat.mod(i, 1n+cp),
+      Laws.mod_inj_lap(i, t, cp, h1, h2)),
+    b_le(Nat.mod(Nat.add(i, t), 1n+cp), H.hist_len(ring),
+      Laws.le_trans(Nat.mod(Nat.add(i, t), 1n+cp), cp, H.hist_len(ring),
+        Laws.mod_bound(Nat.add(i, t), cp),
+        lemon1_go(cp, H.hist_len(ring),
+          Laws.le_ok_iff(1n+cp, H.hist_len(ring), hfull)))))
+
+# ---- the fold's helpers: an append, its snoc-move, the sum converters ----
+
+# the append, recursing on the FIRST argument (the go-lemma's RHS shape):
+# happ2(acc, b) is acc ++ b.  Proof-internal: the law statement stays
+# clean (ring_of == xs), the helper never leaves this section.
+def happ2(+acc: List<&2, F32>, +b: List<&2, F32>) -> List<&2, F32>:
+  match acc:
+    case Nil{}:
+      b
+    case h <> t:
+      h <> happ2(t, b)
+
+# append's nil-right half: happ2(acc, Nil) == acc -- the go-lemma's base
+# case.  Induction on acc, the IH under the head.
+def happ2_nil_r(+acc: List<&2, F32>)
+  -> {happ2(acc, Nil{}) == acc : List<&2, F32>}:
+  match acc:
+    case Nil{}:
+      {==}
+    case h <> t:
+      %happ2_nil_r(t)
+        : {h <> happ2(t, Nil{}) == h <> _ : List<&2, F32>}
+      {==}
+
+# append's snoc-move: happ2(snoc(acc, h), t) == happ2(acc, h <> t) -- the
+# append's defining equation, the bridge the fold's step case needs.
+# Induction on acc: both sides rebuild the same head.
+def happ2_snoc_move(+acc: List<&2, F32>, +h: F32, +t: List<&2, F32>)
+  -> {happ2(H.hist_snoc(acc, h), t) == happ2(acc, h <> t)
+      : List<&2, F32>}:
+  match acc:
+    case Nil{}:
+      {==}
+    case a <> t2:
+      %happ2_snoc_move(t2, h, t)
+        : {a <> happ2(H.hist_snoc(t2, h), t) == a <> _ : List<&2, F32>}
+      {==}
+
+# the sum-shift, Bool form: tick + (1+len) <= cap implies (1+tick) + len
+# <= cap -- the step moves the successor from the tape side of the sum to
+# the tick side.  Induction peeling tick and cap in lockstep; the
+# Bool-typed hypothesis is + (Data), so ONE witness serves both the fence
+# and the recursion.
+def sum_le_shift_go(tick: Nat, +b: Nat, +c: Nat,
+                    +h: {Nat.is_le(Nat.add(tick, 1n+b), c) == True{} : Bool})
+  -> {Nat.is_le(Nat.add(1n+tick, b), c) == True{} : Bool}:
+  match tick c h:
+    case 0n 0n h:
+      Bool.fne({Nat.is_le(Nat.add(1n, b), 0n) == True{} : Bool}, h)
+    case 0n 1n+cp h:
+      h
+    case 1n+q 0n h:
+      Bool.fne({Nat.is_le(Nat.add(1n+1n+q, b), 0n) == True{} : Bool}, h)
+    case 1n+q 1n+cp h:
+      sum_le_shift_go(q, b, cp, h)
+
+# the fence from the sum, Bool form: tick + (1+len) <= cap implies
+# tick < cap -- the +1 on the tape side is what keeps the fence strict.
+# The successor cases of lt_ok peel with the induction.
+def lt_of_sum_le_go(tick: Nat, +b: Nat, +c: Nat,
+                    +h: {Nat.is_le(Nat.add(tick, 1n+b), c) == True{} : Bool})
+  -> R.lt_ok(tick, c):
+  match tick c h:
+    case 0n 0n h:
+      Bool.fne(R.lt_ok(0n, 0n), h)
+    case 0n 1n+cp h:
+      Unit{}
+    case 1n+q 0n h:
+      Bool.fne(R.lt_ok(1n+q, 0n), h)
+    case 1n+q 1n+cp h:
+      lt_of_sum_le_go(q, b, cp, h)
+
+# hist_len(Nil) is 0: the top-level accumulator's length witness.
+def hist_len_nil() -> {H.hist_len(Nil{}) == 0n : Nat}:
+  {==}
+
+# THE go-lemma: the first-lap fold is the append.  Invariant: the
+# accumulator IS the first `tick` ticks (hlen), and every remaining tick
+# is below the fence (hfit: tick + len <= cap, so the CURRENT tick is
+# strictly inside -- lt_of_sum_le_go).  Then the write at slot
+# mod(tick, cap) = tick (mod_lt) = len(acc) (hlen) is an extension,
+# i.e. a snoc (ring_write_snoc); the accumulator's length invariant is
+# rebuilt by hist_len_snoc, the fence invariant by sum_le_shift_go, and
+# the RHS by happ2_snoc_move.  All the bridging is Equal plumbing.
+def ring_of_first_go(+xs: List<&2, F32>, +cap: Nat, +tick: Nat,
+                     +acc: List<&2, F32>,
+                     +hlen: {H.hist_len(acc) == tick : Nat},
+                     +hfit: {Nat.is_le(Nat.add(tick, H.hist_len(xs)), cap)
+                             == True{} : Bool})
+  -> {H.ring_of_go(xs, cap, tick, acc) == happ2(acc, xs) : List<&2, F32>}:
+  match xs:
+    case Nil{}:
+      Equal.sym(List<&2, F32>, happ2(acc, Nil{}), acc, happ2_nil_r(acc))
+    case h <> t:
+      Equal.trans(List<&2, F32>,
+        H.ring_of_go(t, cap, 1n+tick, H.ring_write(acc, h, Nat.mod(tick, cap))),
+        H.ring_of_go(t, cap, 1n+tick, H.hist_snoc(acc, h)),
+        happ2(acc, h <> t),
+        Equal.cong(List<&2, F32>, List<&2, F32>,
+          z => H.ring_of_go(t, cap, 1n+tick, z),
+          H.ring_write(acc, h, Nat.mod(tick, cap)),
+          H.hist_snoc(acc, h),
+          Equal.trans(List<&2, F32>,
+            H.ring_write(acc, h, Nat.mod(tick, cap)),
+            H.ring_write(acc, h, H.hist_len(acc)),
+            H.hist_snoc(acc, h),
+            Equal.cong(Nat, List<&2, F32>, s => H.ring_write(acc, h, s),
+              Nat.mod(tick, cap), H.hist_len(acc),
+              Equal.trans(Nat, Nat.mod(tick, cap), tick, H.hist_len(acc),
+                Laws.mod_lt(tick, cap, lt_of_sum_le_go(tick, H.hist_len(t), cap, hfit)),
+                Equal.sym(Nat, H.hist_len(acc), tick, hlen))),
+            Laws.ring_write_snoc(acc, h))),
+        Equal.trans(List<&2, F32>,
+          H.ring_of_go(t, cap, 1n+tick, H.hist_snoc(acc, h)),
+          happ2(H.hist_snoc(acc, h), t),
+          happ2(acc, h <> t),
+          ring_of_first_go(t, cap, 1n+tick, H.hist_snoc(acc, h),
+            Equal.trans(Nat, H.hist_len(H.hist_snoc(acc, h)),
+              1n+H.hist_len(acc), 1n+tick,
+              Laws.hist_len_snoc(acc, h),
+              Equal.cong(Nat, Nat, z => 1n+z, H.hist_len(acc), tick, hlen)),
+            sum_le_shift_go(tick, H.hist_len(t), cap, hfit)),
+          happ2_snoc_move(acc, h, t)))
+
+# ring_of_first_lap: the top call.  The accumulator is Nil at tick 0
+# (hist_len_nil), the fence is the law's own witness (le_ok_iff puts it
+# in the sum's Bool form), and the go-lemma's RHS happ2(Nil, xs) is xs
+# definitionally -- the fold IS the tape.
+def Laws.ring_of_first_lap(xs, cap, h):
+  ring_of_first_go(xs, cap, 0n, Nil{}, hist_len_nil(),
+    Laws.le_ok_iff(H.hist_len(xs), cap, h))
+
+# the pinned instances: pure computation, definitional (mod on literals,
+# ring_write on literal lists, the samples carried structurally).
+def Laws.ring_of_good_4():
+  {==}
+
+def Laws.ring_read_live_good_4():
+  {==}
+
+def Laws.ring_read_stale_good_4():
+  {==}

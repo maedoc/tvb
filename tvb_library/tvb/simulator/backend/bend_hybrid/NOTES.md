@@ -209,3 +209,35 @@ companion.
   Bend->C codegen).  Next: the `ok(c) == True` -> P law family (E19's
   theorem half) and the Python property harness attacking the decoder+ok
   boundary.
+
+## Ring write path (2026-10-05, fourth session)
+
+- `hist.bend` grew the ring write path: `ring_write` (slot update),
+  `ring_snoc` (per-publish write at slot `tick mod cap`), `ring_of` /
+  `ring_of_go` (the tape-to-ring fold, accumulator form so the NEWER tick
+  wins a slot clash).  Laws = LAWS section 6f (147 total), proofs in
+  PROOF_router.bend's 6f block; the fold-agreement target law is left as
+  a Phase-2 comment.
+- NEW SYNTAX FACTS (all verified against the checker):
+  - A Type-valued witness (`le_ok`/`lt_ok`) CANNOT be `+` in a law: the
+    checker demands Data and reports "expected : Data, observed : Type".
+    Workaround that keeps a witness reusable across several proof uses:
+    carry it in BOOL form (`{Nat.is_le(...) == True{} : Bool}`) and
+    convert at the use sites (`le_ok_iff` in, `b_le` / `lt_of_sum_le_go`
+    out).  This is what the first-lap fold's go-lemma does with its fence.
+  - Pattern binders shadow earlier binders of the same name silently:
+    `case h <> t 0n 0n h _:` rebinds the head `h` (F32) as the decider
+    proof, and the goal then type-errors confusingly.  Name witness
+    binders distinctly (`hne`, `hw`).
+  - `is_ne` arguments do not commute: `mod_inj_lap` concludes
+    `is_ne(mod(i+t), mod(i))` while a stability law wants
+    `is_ne(i_slot, w_slot)` -- `ne_symm` flips it.
+  - A cons literal inside a `cong` lambda is fine without annotation
+    (`z => H.ring_of_go(t, cap, 1n+tick, z)`); the annotation is only
+    needed for bare `let` bindings.
+- Proof-shape notes for future ladder rungs: the fold's induction needs
+  the sum invariant in the shape `Nat.add(tick, 1n+len)` (tick first,
+  tape-side successor explicit) so the step's witness conversion is one
+  lockstep induction (`sum_le_shift_go`); and the append helper
+  (`happ2`) must recurse on the FIRST argument for the base case to be
+  definitional, with `happ2_snoc_move` as its step bridge.
