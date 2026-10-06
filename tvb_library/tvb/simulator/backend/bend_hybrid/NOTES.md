@@ -272,3 +272,19 @@ companion.
   leads (see win_cells_go's wrapper).
 - Window reading: route_window's w samples are (lo, hi] -- ticks
   lo+1..hi -- pinned by win_cells_instance.
+
+## Not yet covered: sweep parameter routing (2026-10-05)
+
+The router/contract laws cover ONE sim's schedule, reads, windows, and
+writes. What they do NOT cover (user-noted): the parameter sweep --
+an arbitrary JSON-supplied parameter set varying per sim, run Monte-Carlo
+embarrassingly parallel over cores/GPU lanes. The missing law family (the
+sweep analog of the router contract): (1) sweep row i routes to sim i
+(index arithmetic, same shape as slice_nth/nth_lane); (2) exactly nsweep
+sims, each row consumed exactly once (the route_all_len / ok_no_clash
+analog); (3) total JSON decode of the sweep (the json_ingest pattern,
+extended); (4) the parallel split is a permutation and the result gather
+is order-exact (sim i's output lands at output row i); (5) per-sim config
+validation composes with the per-sim routing contract. montbrio_sweep.bend
+today uses a packed-word job file (words_loop / j_* accessors) -- the JSON
+variant is the design target.
