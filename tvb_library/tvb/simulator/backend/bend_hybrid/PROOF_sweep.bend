@@ -295,7 +295,7 @@ def sw_le_b(x: Nat, y: Nat, h: R.le_ok(x, y))
 # Type-valued witness -- NOT +able -- so it is converted ONCE to its Bool
 # form ({is_le(1n+i, len) == True}, exactly lt_ok(i, len) unfolded) and
 # converted back per use with PR.b_le (the NOTES bool-witness idiom).
-def Laws.sweep_contract(t, c, runs, tk, i, h, hk, hb):
+def Laws.sweep_contract(t, c, runs, tk, i, j, h, hk, hj):
   +h2 = h
   +hkB = sw_le_b(Nat.add(i, 1n), S.sweep_len(t), hk)
   hwB = PR.and_elim_l_go(Nat.is_le(S.sweep_len(t), 8n), R.ok(c), h)
@@ -306,32 +306,32 @@ def Laws.sweep_contract(t, c, runs, tk, i, h, hk, hb):
   hfan = Laws.fan8_exact(runs, S.sweep_len(t), i, hw,
                          PR.b_le(Nat.add(i, 1n), S.sweep_len(t), hkB))
   hrun = PR.routing_contract_at(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c),
-                                tk, i, hok, {==}, {==}, hb)
+                                tk, j, hok, {==}, {==}, hj)
   Equal.trans(F32 & (String & Bool),
     (S.sweep_nth(t, i),
      S.str_nth(S.fan8(S.sweep_len(t), runs), i),
-     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i)),
+     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
     (S.sweep_word(t, i),
      S.str_nth(S.fan8(S.sweep_len(t), runs), i),
-     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i)),
+     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
     (S.sweep_word(t, i), S.str_nth(runs, i), True{}),
     Equal.cong(F32, F32 & (String & Bool),
                w => (w,
                      S.str_nth(S.fan8(S.sweep_len(t), runs), i),
-                     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i)),
+                     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
                S.sweep_nth(t, i), S.sweep_word(t, i), hroute),
     Equal.trans(F32 & (String & Bool),
       (S.sweep_word(t, i),
        S.str_nth(S.fan8(S.sweep_len(t), runs), i),
-       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i)),
+       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
       (S.sweep_word(t, i), S.str_nth(runs, i),
-       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i)),
+       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
       (S.sweep_word(t, i), S.str_nth(runs, i), True{}),
       Equal.cong(String, F32 & (String & Bool),
                  w => (S.sweep_word(t, i), w,
-                       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i)),
+                       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
                  S.str_nth(S.fan8(S.sweep_len(t), runs), i), S.str_nth(runs, i), hfan),
       Equal.cong(Bool, F32 & (String & Bool),
                  w => (S.sweep_word(t, i), S.str_nth(runs, i), w),
-                 S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i),
+                 S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j),
                  True{}, hrun)))

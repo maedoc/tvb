@@ -49,15 +49,17 @@ structures are, what the laws say, and how to check them.
 > [VALUE_LEVEL_EXPLAINER.md](VALUE_LEVEL_EXPLAINER.md) for what could be
 > proved about values, at what cost.
 
-Status: **175 laws** in `LAWS_router.bend` (+5 in `LAWS_json.bend`, +13
-model-level in `LAWS.bend`), every one kernel-verified
+Status: **175 laws** in `LAWS_router.bend`, **15** in `LAWS_sweep.bend`
+(the parameter sweep), **5** in `LAWS_json.bend`, **13** model-level in
+`LAWS.bend`, every one kernel-verified
 (`bend PROOF_router.bend --verdict`), with 17 negative controls that the
 checker must *reject*. Everything is quantified: the JSON ingress decodes
 **any** string (garbage included), so a claim over `String` is a claim
 over every document the binary will ever see at runtime.
 
-The contract itself, as three named capstones (section 8 of
-`LAWS_router.bend`):
+The contract itself: three named capstones (section 8 of
+`LAWS_router.bend`), plus `sweep_contract` for the parameter sweep
+(§2.10):
 
 - **`routing_contract`** — in an accepted config, every routed line at
   every tick is fresh, inside the history window, and well-ordered.
@@ -363,6 +365,52 @@ a future re-association — even a value-equal one — breaks them. In
 IEEE-754 that is exactly the numerical-fidelity contract wearing a
 structural costume.
 
+### 2.10 The sweep — *which sim gets which parameters*
+
+A sweep runs a batch of sims from one job: `n_sweep` sims, each with its
+own parameter row (today one varying float per sim; the design target is
+arbitrary per-sim parameter sets from JSON — the schema is the one open
+question). The engine fans the batch over a **fixed 8 parallel lanes**:
+lane `k` runs sim `k`; lanes past `n_sweep` sit idle (their slot costs a
+match, not a simulation); per-sim outputs concatenate in lane order.
+
+**What can go wrong.** Sim 3 reads row 2 (index arithmetic off by one);
+a sweep wider than the fan silently loses sims (no error — they simply
+never run); the gather puts sim 4's output in block 3; a malformed row
+reaches a sim unvalidated; the parallel execution order leaks into the
+results.
+
+**What the laws enforce** (15 laws, `LAWS_sweep.bend`, gate
+`tests/run_sweep.sh`):
+
+- **Row routing** (`sweep_nth_route`, pinned by the head and stride laws
+  plus literal instances): the parameter reaching sim `i` is exactly table
+  row `i` — provable only inside the table (the bounds witness cannot be
+  fabricated), so an off-by-one makes the proof unwritable.
+- **Coverage** (`fan8_exact`): the active lanes are exactly `0..n−1`,
+  each running once. Both bounds are load-bearing — the interesting one
+  is the width: the fan is *fixed at 8 lanes*, so a sweep of 9 sims cannot
+  even state coverage. The validator turns that into a rejection
+  (`sweep_ok_width`): an oversized sweep fails at load time instead of
+  silently truncating.
+- **Gather** (`fan_gather_order`): the fan's output equals the sequential
+  concatenation `run(0) ++ ... ++ run(n−1)` — the "embarrassingly
+  parallel is correct" claim: parallel execution provably computes what
+  running in order would.
+- **The capstone** (`sweep_contract`): for a validated sweep, any sim
+  `i`, and any projection `j` of the shared config, one claim says all
+  of: the parameter reaching sim `i` IS row `i`; sim `i`'s result lands
+  in output block `i`; and the per-sim routing contract (fresh,
+  in-window, ordered reads from the router suite) holds at projection
+  `j`. The three halves are different types, so the law is a triple
+  equality — it holds exactly when every half does.
+
+Remaining gap (documented in the law file's header): the JSON ingress
+for sweeps (the schema choice — per-sim rows vs per-parameter columns),
+and the byte→word decode of the packed sweep table (the decode machinery
+is shared with the edge sections and pinned by the packed-roundtrip laws
+of `LAWS.bend`).
+
 ## 3. How the proofs work
 
 - **Everything is a law.** Bend has no lemma-in-a-proof, so the
@@ -392,6 +440,7 @@ export PATH="$HOME/.local/bin:$PATH"     # lean, for --verdict
 cd tvb_library/tvb/simulator/backend/bend_hybrid
 bash tests/run_router.sh                 # 175 laws + 17 negatives + pinned tests
 bash tests/run_json.sh                   # ingress laws + compiled-binary JSON runs
+bash tests/run_sweep.sh                  # sweep laws + the width negative + sweep smoke
 ```
 
 The bend binary is `/home/duke/.bend/bin/bend` (v2.0.34). Both gates end
@@ -409,6 +458,8 @@ kernel (the checker/kernel trust story: see `ECOSYSTEM.md` — keep
 | `coupling.bend` | the average's range (`win_cells`/`edge_cells`) and write site (`Write`, `cs`) |
 | `json_ingest.bend` | the total JSON decoder (explicit state machine) |
 | `LAWS_router.bend` / `PROOF_router.bend` | the 175 claims and their proofs |
+| `LAWS_sweep.bend` / `PROOF_sweep.bend` | the 15 sweep claims and their proofs |
+| `sweep.bend` | the sweep spec: the parameter table, the fan, the gather |
 | `LAWS_json.bend` / `PROOF_json.bend` | the ingress claims and proofs |
 | `bad/` | negative controls — must be rejected |
 | `tests/` | the gates |
@@ -429,6 +480,8 @@ Deep dives, roughly in reading order:
    results (bendcheck fuzz, verdict trust).
 7. [NOTES.md](NOTES.md) — operational gotchas and proof-system facts.
 8. [BEND_TVB_GUIDE.md](BEND_TVB_GUIDE.md) — writing Bend for TVB work.
+9. [SWEEP_LAWS_DESIGN.md](SWEEP_LAWS_DESIGN.md) — the sweep-routing proof
+   plan (implemented; the JSON ingress question remains open).
 
 Python mirrors: `compare_window_hold.py` (the window/hold laws checked
 against an independent Python transcription), `compare_monitor.py`.

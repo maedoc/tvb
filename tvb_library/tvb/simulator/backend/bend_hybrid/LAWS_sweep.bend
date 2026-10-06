@@ -165,16 +165,19 @@ law sweep_valid_nth:
   {S.str_nth(S.fan8(S.sweep_len(t), runs), k) == S.str_nth(runs, k) : String}
 
 # THE SWEEP CONTRACT -- the Monte-Carlo capstone, ONE claim over the
-# triple (param in, result out, routing clean).  For a validated sweep
-# and an in-bounds sim i:
+# triple (param in, result out, routing clean).  For a validated sweep,
+# an in-bounds sim i, and ANY projection j of the shared config:
 #   (a) PARAMS IN: the parameter reaching sim i IS table row i
 #       (sweep_nth_route instantiated);
 #   (b) RESULTS OUT: lane i's output IS run i in the fixed 8-wide fan
 #       (fan8_exact instantiated, the width witness from sweep_ok_width);
-#   (c) ROUTING CLEAN: the shared config's routing contract holds
-#       (Laws.routing_contract instantiated at the shared config -- its
-#       conclusion bundle is S.routing_bundle; discharged by the bridge
-#       routing_contract_at in PROOF_router.bend).
+#   (c) ROUTING CLEAN: the shared config's routing contract holds at
+#       projection j (Laws.routing_contract instantiated at the shared
+#       config -- its conclusion bundle is S.routing_bundle; discharged
+#       by the bridge routing_contract_at in PROOF_router.bend).  The sim
+#       index i and the projection index j are INDEPENDENT quantifiers:
+#       the routing claim is per-projection of the shared config, not
+#       tied to the sim.
 # The three halves are heterogeneous (an F32 equality, a String equality
 # and a Bool bundle), so Bool.and cannot carry them; the Type-level
 # conjunction is the pair equality below -- (F32 & (String & Bool)) --
@@ -186,12 +189,13 @@ law sweep_contract:
   for +runs: List<&2, String>
   for +tk: Nat
   for +i: Nat
+  for +j: Nat
   for +h: {S.sweep_ok(t, c) == True{} : Bool}
   for hk: R.lt_ok(i, S.sweep_len(t))
-  for hb: R.lt_ok(i, R.projs_len(R.cfg_projs(c)))
+  for hj: R.lt_ok(j, R.projs_len(R.cfg_projs(c)))
   {(S.sweep_nth(t, i),
     S.str_nth(S.fan8(S.sweep_len(t), runs), i),
-    S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i))
+    S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j))
    ==
    (S.sweep_word(t, i), S.str_nth(runs, i), True{})
    : F32 & (String & Bool)}

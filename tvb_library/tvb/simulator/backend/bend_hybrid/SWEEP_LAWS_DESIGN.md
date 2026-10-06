@@ -1,6 +1,8 @@
 # Sweep laws design — proving the parameter routing of the Monte-Carlo sweep
 
 > **New here?** Start with [README.md](README.md) — the guided tour (goals, data structures, the high-level laws). This file is a design note.
+>
+> **Status: implemented** — LAWS_sweep.bend / PROOF_sweep.bend (15 laws, gates green; `sweep_contract` fixed to use an independent projection quantifier after review). Remaining: the JSON sweep ingress (schema open).
 
 *Design note, 2026-10-05. Scope: what laws would prove that the sweep's
 parameter rows route to the right sims, and what the proofs look like.

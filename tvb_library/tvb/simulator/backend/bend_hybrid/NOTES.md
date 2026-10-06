@@ -273,7 +273,16 @@ companion.
 - Window reading: route_window's w samples are (lo, hi] -- ticks
   lo+1..hi -- pinned by win_cells_instance.
 
-## Not yet covered: sweep parameter routing (2026-10-05)
+## Sweep parameter routing (2026-10-05) -- COVERED
+
+Landed in LAWS_sweep.bend / PROOF_sweep.bend (15 laws, commits
+e88296add + a0a4ab8ac, plus the sweep_contract independent-projection
+fix). The fan's width bound is a validator conjunct (sweep_ok_width),
+so an n_sweep > 8 sweep is rejected at load time. Remaining gaps: the
+JSON sweep ingress (schema open) and the byte->word decode of the
+packed sweep table (shared with the edge sections' packed laws).
+
+The original analysis (kept as the design record):
 
 The router/contract laws cover ONE sim's schedule, reads, windows, and
 writes. What they do NOT cover (user-noted): the parameter sweep --
