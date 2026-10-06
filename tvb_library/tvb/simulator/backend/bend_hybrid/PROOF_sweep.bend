@@ -162,6 +162,9 @@ def fan8_exact_go(w: Nat, a: Nat, runs: List<&2, String>, i: Nat,
     case 1n+s 1n+d Nil{} 1n+p hw hlt:
       fan8_exact_go(s, d, Nil{}, p, hw, hlt)
 
+# the w = 8 instance of the engine's real 8-wide fan: the SAME go-lemma
+# fan_exact's fill uses, at w = 8n (fills cannot call fills, so the
+# instance repeats the one call; the shared induction is fan8_exact_go).
 def Laws.fan8_exact(runs, n, k, hw, h):
   fan8_exact_go(8n, n, runs, k, hw, h)
 
@@ -240,6 +243,8 @@ def fan_gather_order_go(w: Nat, a: Nat, runs: List<&2, String>,
     case 1n+s 1n+d Nil{} hw:
       fan_gather_order_go(s, d, Nil{}, hw)
 
+# the w = 8 instance -- the same go-lemma fan_gather_order_gen's fill
+# uses, at w = 8n.
 def Laws.fan_gather_order(runs, n, hw):
   fan_gather_order_go(8n, n, runs, hw)
 
@@ -335,3 +340,189 @@ def Laws.sweep_contract(t, c, runs, tk, i, j, h, hk, hj):
                  w => (S.sweep_word(t, i), S.str_nth(runs, i), w),
                  S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j),
                  True{}, hrun)))
+
+# --------------------------------------------------------------------------
+# Phase 3 -- the GENERALIZATION
+# --------------------------------------------------------------------------
+# A. GENERAL WIDTH.  fan8_exact_go and fan_gather_order_go were already
+# written over the GENERAL fan_go (the w rides as a parameter), so the
+# general laws are the same go-lemmas at abstract w -- no new induction.
+# fan8_exact / fan_gather_order become what they always were: the w = 8
+# instances of the engine's real 8-wide fan.
+
+def Laws.fan_exact(runs, w, n, k, hw, h):
+  fan8_exact_go(w, n, runs, k, hw, h)
+
+def Laws.fan_gather_order_gen(runs, w, n, hw):
+  fan_gather_order_go(w, n, runs, hw)
+
+# --------------------------------------------------------------------------
+# B. MULTI-PARAM ROWS
+# --------------------------------------------------------------------------
+# sweep_row_nth: the sweep_nth_route induction at the row level -- peel
+# one row of the table per step; the witness refines with the peel; the
+# Nil cases are absurd through the witness.
+
+def sweep_row_nth_go(i: Nat, rows: List<&2, List<&2, F32>>,
+                     h: R.lt_ok(i, S.rows_len(rows)))
+  -> {S.sweep_row(rows, i) == S.sweep_row_ref(rows, i) : List<&2, F32>}:
+  match i rows h:
+    case 0n Nil{} hlt:
+      Empty.absurd({S.sweep_row(Nil{}, 0n) == S.sweep_row_ref(Nil{}, 0n)
+                    : List<&2, F32>}, hlt)
+    case 0n h0 <> t _:
+      {==}
+    case 1n+p Nil{} hlt:
+      Empty.absurd({S.sweep_row(Nil{}, 1n+p) == S.sweep_row_ref(Nil{}, 1n+p)
+                    : List<&2, F32>}, hlt)
+    case 1n+p h0 <> t hlt:
+      sweep_row_nth_go(p, t, hlt)
+
+def Laws.sweep_row_nth(rows, i, h):
+  sweep_row_nth_go(i, rows, h)
+
+# sweep_field_nth: sweep_nth_route instantiated at sim i's row -- the
+# field read IS the row's word read.  The row witness rides unused (the
+# claim is about the row the witness already routed).
+def Laws.sweep_field_nth(rows, i, j, hi, hj):
+  Laws.sweep_nth_route(S.sweep_row(rows, i), j, hj)
+
+# --------------------------------------------------------------------------
+# the row-major wire
+# --------------------------------------------------------------------------
+# the shift brick: reading at w + k equals dropping w elements first --
+# skipping one row of the wire IS skipping w words of the read.  Peels w
+# and the flat table in lockstep (the Nil case closes definitionally: both
+# sides read the default).
+def flat_shift_go(w: Nat, flat: List<&2, F32>, +k: Nat)
+  -> {S.sweep_nth(flat, Nat.add(w, k))
+      == S.sweep_nth(S.sweep_drop(flat, w), k) : F32}:
+  match w flat:
+    case 0n Nil{}:
+      {==}
+    case 0n h0 <> t:
+      {==}
+    case 1n+s Nil{}:
+      {==}
+    case 1n+s h0 <> t:
+      flat_shift_go(s, t, k)
+
+# flat_addr_step: Nat.mul(1n+i, w) reduces to w + i*w, so the goal is
+# add(add(w, i*w), j) == add(w, (i*w + j)) -- exactly the add_assoc brick.
+def Laws.flat_addr_step(i, w, j):
+  PR.add_assoc_go(w, Nat.mul(i, w), j)
+
+# flat_nth: induction on the row counter i.  The base is definitional
+# (0*w + j reduces to j).  The step chains the address brick (row 1+i's
+# field j lives at w + (i*w + j)), the shift brick (dropping the first row
+# of w moves the read to that address), and the induction hypothesis at
+# row i of the shrunken table; the goal's structural read reduces to the
+# shrunken one.
+def flat_nth_go(+w: Nat, i: Nat, +flat: List<&2, F32>, +j: Nat)
+  -> {S.flat_at(flat, i, w, j) == S.flat_read(flat, i, w, j) : F32}:
+  match i:
+    case 0n:
+      {==}
+    case 1n+(+p):
+      h1 = Equal.cong(Nat, F32, z => S.sweep_nth(flat, z),
+                      S.flat_addr(1n+p, w, j),
+                      Nat.add(w, S.flat_addr(p, w, j)),
+                      Laws.flat_addr_step(p, w, j))
+      h2 = flat_shift_go(w, flat, S.flat_addr(p, w, j))
+      h3 = flat_nth_go(w, p, S.sweep_drop(flat, w), j)
+      Equal.trans(F32,
+        S.sweep_nth(flat, S.flat_addr(1n+p, w, j)),
+        S.sweep_nth(flat, Nat.add(w, S.flat_addr(p, w, j))),
+        S.flat_read_go(w, p, S.sweep_drop(flat, w), j),
+        h1,
+        Equal.trans(F32,
+          S.sweep_nth(flat, Nat.add(w, S.flat_addr(p, w, j))),
+          S.sweep_nth(S.sweep_drop(flat, w), S.flat_addr(p, w, j)),
+          S.flat_read_go(w, p, S.sweep_drop(flat, w), j),
+          h2, h3))
+
+def Laws.flat_nth(flat, w, i, j):
+  flat_nth_go(w, i, flat, j)
+
+# --------------------------------------------------------------------------
+# the column->row assembly
+# --------------------------------------------------------------------------
+# col_to_row: peel j and the column list in lockstep -- the assembled
+# row's element j is column j's contribution by construction (element i of
+# the j-th column), and past either end both sides read the default.
+def col_to_row_go(j: Nat, cols: List<&2, List<&2, F32>>, +i: Nat)
+  -> {S.sweep_nth(S.col_row(cols, i), j)
+      == S.sweep_nth(S.col_nth(cols, j), i) : F32}:
+  match j cols:
+    case 0n Nil{}:
+      {==}
+    case 0n c0 <> rest:
+      {==}
+    case 1n+q Nil{}:
+      {==}
+    case 1n+q c0 <> rest:
+      col_to_row_go(q, rest, i)
+
+def Laws.col_to_row(cols, i, j):
+  col_to_row_go(j, cols, i)
+
+# the instance pins: pure computation on the literal 2x2 column table.
+def Laws.col_row_inst_0():
+  {==}
+
+def Laws.col_row_inst_1():
+  {==}
+
+# --------------------------------------------------------------------------
+# the row-table validator
+# --------------------------------------------------------------------------
+# the three and-elimination halves (PR.and_elim_l_go / PR.and_elim_r_go,
+# PROOF_router.bend's plain helpers).  sweep_rows_ok is a NESTED and:
+# width /\ (shape /\ ok), so the shape half eliminates twice.
+def Laws.sweep_rows_ok_len(rows, wp, c, h):
+  PR.and_elim_l_go(Nat.is_le(S.rows_len(rows), 8n),
+                   Bool.and(S.rows_shape_ok(rows, wp), R.ok(c)), h)
+
+def Laws.sweep_rows_ok_shape(rows, wp, c, h):
+  PR.and_elim_l_go(S.rows_shape_ok(rows, wp), R.ok(c),
+                   PR.and_elim_r_go(Nat.is_le(S.rows_len(rows), 8n),
+                                    Bool.and(S.rows_shape_ok(rows, wp), R.ok(c)),
+                                    h))
+
+def Laws.sweep_rows_ok_cfg(rows, wp, c, h):
+  PR.and_elim_r_go(S.rows_shape_ok(rows, wp), R.ok(c),
+                   PR.and_elim_r_go(Nat.is_le(S.rows_len(rows), 8n),
+                                    Bool.and(S.rows_shape_ok(rows, wp), R.ok(c)),
+                                    h))
+
+# sweep_rows_shape_nth: induction on the row index, peeling one row per
+# step; the every-row hypothesis refines in lockstep (the head's is_eq is
+# the and-left of the fold, the tail's fold is the and-right); the Nil
+# cases are absurd through the bounds witness (an in-bounds index cannot
+# point past the table).
+def rows_shape_nth_go(i: Nat, rows: List<&2, List<&2, F32>>, +wp: Nat,
+                      h: {S.rows_shape_ok(rows, wp) == True{} : Bool},
+                      hi: R.lt_ok(i, S.rows_len(rows)))
+  -> {Nat.is_eq(S.sweep_len(S.sweep_row(rows, i)), wp) == True{} : Bool}:
+  match i rows h hi:
+    case 0n r0 <> t hst _:
+      PR.and_elim_l_go(Nat.is_eq(S.sweep_len(r0), wp), S.rows_shape_ok(t, wp), hst)
+    case 0n Nil{} hst hlt:
+      Empty.absurd({Nat.is_eq(S.sweep_len(S.sweep_row(Nil{}, 0n)), wp)
+                    == True{} : Bool}, hlt)
+    case 1n+p r0 <> +t hst hlt:
+      rows_shape_nth_go(p, t, wp,
+                        PR.and_elim_r_go(Nat.is_eq(S.sweep_len(r0), wp),
+                                         S.rows_shape_ok(t, wp), hst), hlt)
+    case 1n+p Nil{} hst hlt:
+      Empty.absurd({Nat.is_eq(S.sweep_len(S.sweep_row(Nil{}, 1n+p)), wp)
+                    == True{} : Bool}, hlt)
+
+# h is needed twice (width and shape eliminations), so it is re-bound +
+# (equality proofs are Data).
+def Laws.sweep_rows_shape_nth(rows, wp, c, h, i, hi):
+  +h2 = h
+  hrest = PR.and_elim_r_go(Nat.is_le(S.rows_len(rows), 8n),
+                           Bool.and(S.rows_shape_ok(rows, wp), R.ok(c)), h2)
+  hshape = PR.and_elim_l_go(S.rows_shape_ok(rows, wp), R.ok(c), hrest)
+  rows_shape_nth_go(i, rows, wp, hshape, hi)

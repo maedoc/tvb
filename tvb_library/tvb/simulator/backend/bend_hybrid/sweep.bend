@@ -18,9 +18,11 @@
 # SPEC SHAPE (the tape/ring convention: the list is the spec, the Array is
 # the implementation):
 #   - the TABLE is a FLAT `List<&2, F32>` -- one varying parameter per sim,
-#     matching the prototype's one-word-per-sim sweep section.  (The JSON
-#     row-set future would be the 2-level `List<&2, List<&2, F32>>`, the
-#     same shape as coupling.bend's `cs`; this phase pins the flat table.)
+#     matching the prototype's one-word-per-sim sweep section.  Phase 3
+#     adds the 2-LEVEL table `List<&2, List<&2, F32>>` -- one ROW of
+#     parameters per sim (the same shape as coupling.bend's `cs`) -- plus
+#     the row-major flat wire layout and the COLUMN->ROW assembly (the TVB
+#     sweep API is named-key columns: params={"coupling_scale": [v0, ..]}).
 #   - the FAN takes the per-lane runs as a `List<&2, String>` -- a run
 #     FUNCTION `f: Nat -> String` cannot be shared 8 ways (Bend is affine
 #     and a function is not Data, so an 8-lane fan cannot take `f`), which
@@ -225,3 +227,126 @@ def routing_bundle(+c: R.Config, +ls: List<&2, R.Lane>, +ps: List<&2, R.Proj>,
                               R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i))),
                     Nat.is_le(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
                               R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)))))
+
+# --------------------------------------------------------------------------
+# the 2-LEVEL table: one ROW of parameters per sim (the multi-param sweep)
+# --------------------------------------------------------------------------
+
+# the row count -- the bounds witness of the row-routing laws
+def rows_len(rows: List<&2, List<&2, F32>>) -> Nat:
+  match rows:
+    case Nil{}:
+      0n
+    case h <> t:
+      1n+rows_len(t)
+
+# sim i's parameter row: row i of the table; missing rows read as the
+# empty row (the cs_row convention, coupling.bend)
+def sweep_row(rows: List<&2, List<&2, F32>>, i: Nat) -> List<&2, F32>:
+  match rows i:
+    case Nil{} _:
+      Nil{}
+    case h <> t 0n:
+      h
+    case h <> t 1n+p:
+      sweep_row(t, p)
+
+# sim i's field j: element j of sim i's row; past-the-end reads 0.0 (the
+# sweep_nth default-read convention)
+def sweep_field(rows: List<&2, List<&2, F32>>, i: Nat, j: Nat) -> F32:
+  sweep_nth(sweep_row(rows, i), j)
+
+# the reference row read, built the offset way: drop i rows, take the head
+# (the sweep_drop / sweep_word pattern at the row level).  An INDEPENDENT
+# implementation of the same read -- sweep_row_nth pins the agreement.
+def rows_drop(rows: List<&2, List<&2, F32>>, k: Nat) -> List<&2, List<&2, F32>>:
+  match rows k:
+    case Nil{} _:
+      Nil{}
+    case h <> t 0n:
+      h <> t
+    case h <> t 1n+p:
+      rows_drop(t, p)
+
+def rows_head_or(rows: List<&2, List<&2, F32>>, +d: List<&2, F32>) -> List<&2, F32>:
+  match rows:
+    case Nil{}:
+      d
+    case h <> t:
+      h
+
+def sweep_row_ref(rows: List<&2, List<&2, F32>>, i: Nat) -> List<&2, F32>:
+  rows_head_or(rows_drop(rows, i), Nil{})
+
+# --------------------------------------------------------------------------
+# the row-major WIRE: the packed flat table and its two reads
+# --------------------------------------------------------------------------
+
+# the row-major address: row i, field j of a w-wide packed flat table
+# lives at flat index i*w + j
+
+def flat_addr(i: Nat, w: Nat, j: Nat) -> Nat:
+  Nat.add(Nat.mul(i, w), j)
+
+# the wire read, the CLOSED-FORM way: one address, one read (the spec of
+# the packed sweep section's word at base + i*w + j)
+def flat_at(flat: List<&2, F32>, i: Nat, w: Nat, j: Nat) -> F32:
+  sweep_nth(flat, flat_addr(i, w, j))
+
+# the wire read, the STRUCTURAL way: skip i whole rows of w, then read
+# field j.  The recursion shrinks the row counter i (the drop happens
+# after it, so the termination checker sees i shrink first).
+def flat_read_go(+w: Nat, i: Nat, flat: List<&2, F32>, j: Nat) -> F32:
+  match i:
+    case 0n:
+      sweep_nth(flat, j)
+    case 1n+p:
+      flat_read_go(w, p, sweep_drop(flat, w), j)
+
+def flat_read(flat: List<&2, F32>, i: Nat, w: Nat, j: Nat) -> F32:
+  flat_read_go(w, i, flat, j)
+
+# --------------------------------------------------------------------------
+# the COLUMN->ROW assembly (the TVB sweep API's orientation)
+# --------------------------------------------------------------------------
+
+# param j's COLUMN: its values across sims; missing columns read as the
+# empty column (the cs_row shape again -- a column is a list of sims too)
+def col_nth(cols: List<&2, List<&2, F32>>, j: Nat) -> List<&2, F32>:
+  sweep_row(cols, j)
+
+# sim i's row, ASSEMBLED from the columns: element i of column 0, element
+# i of column 1, .. -- the per-sim row the named-key API builds
+def col_row_go(cols: List<&2, List<&2, F32>>, +i: Nat) -> List<&2, F32>:
+  match cols:
+    case Nil{}:
+      Nil{}
+    case c <> rest:
+      sweep_nth(c, i) <> col_row_go(rest, i)
+
+def col_row(cols: List<&2, List<&2, F32>>, i: Nat) -> List<&2, F32>:
+  col_row_go(cols, i)
+
+# --------------------------------------------------------------------------
+# the ROW-TABLE validator (sweep_ok's multi-param generalization)
+# --------------------------------------------------------------------------
+
+# the ROW-SHAPE check: EVERY row has exactly wp fields -- one Bool, so the
+# every-row quantifier is a fold (the nats_lt_all pattern)
+def rows_shape_ok(rows: List<&2, List<&2, F32>>, +wp: Nat) -> Bool:
+  match rows:
+    case Nil{}:
+      True{}
+    case r <> t:
+      Bool.and(Nat.is_eq(sweep_len(r), wp), rows_shape_ok(t, wp))
+
+# THE ROW-TABLE VALIDATOR: the sweep_ok generalization for the multi-param
+# sweep.  (a) the WIDTH bound at the CURRENT engine's 8 lanes (the flat
+# sweep_ok's conjunct, unchanged); (b) the ROW SHAPE: every row carries
+# exactly wp parameters -- a ragged table is a REJECTED config, not a
+# silently mis-routed sim (a short row's missing fields read the 0.0
+# default and the sim runs with garbage parameters); (c) the SHARED
+# CONFIG's R.ok, unchanged.
+def sweep_rows_ok(+rows: List<&2, List<&2, F32>>, +wp: Nat, +c: R.Config) -> Bool:
+  Bool.and(Nat.is_le(rows_len(rows), 8n),
+           Bool.and(rows_shape_ok(rows, wp), R.ok(c)))

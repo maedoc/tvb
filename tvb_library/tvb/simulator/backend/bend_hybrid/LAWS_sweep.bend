@@ -199,3 +199,150 @@ law sweep_contract:
    ==
    (S.sweep_word(t, i), S.str_nth(runs, i), True{})
    : F32 & (String & Bool)}
+
+# --------------------------------------------------------------------------
+# Phase 3 -- the GENERALIZATION (SWEEP_LAWS_DESIGN.md, "Sweep v2")
+# --------------------------------------------------------------------------
+# A. GENERAL WIDTH: fan_go is the general-width recursion (fan8 =
+#    fan_go(8n, n, runs)); the width witness becomes le_ok(n, w) and the
+#    fan8 laws are its w = 8 instances.
+#
+# the nth law at GENERAL width: with n <= w the fan has lane k, and lane
+# k's output IS run k.  BOTH witnesses are load-bearing (the fan8_exact
+# analysis carries verbatim): without lt_ok(k, n) an inactive lane's ""
+# clashes with its run; without le_ok(n, w) an n > w sweep claims coverage
+# for lanes the fan does not have -- the silent-drop failure mode.
+law fan_exact:
+  for +runs: List<&2, String>
+  for w: Nat
+  for n: Nat
+  for k: Nat
+  for hw: R.le_ok(n, w)
+  for h: R.lt_ok(k, n)
+  {S.str_nth(S.fan_go(w, n, runs), k) == S.str_nth(runs, k) : String}
+
+# the gather law at GENERAL width: the gathered fan equals the sequential
+# concatenation of the first n runs, for ANY width w that fits n.  The
+# demos sweep 20 points -- over the 8-wide fan -- so the real engine needs
+# the general statement, not just the w = 8 instance.
+law fan_gather_order_gen:
+  for +runs: List<&2, String>
+  for w: Nat
+  for n: Nat
+  for hw: R.le_ok(n, w)
+  {S.gather(S.fan_go(w, n, runs)) == S.seq_gather(n, runs) : String}
+
+# --------------------------------------------------------------------------
+# B. MULTI-PARAM ROWS: the table generalizes to one ROW of parameters per
+#    sim (the cs_row / cs_get_row 2-level shape).
+# --------------------------------------------------------------------------
+
+# the row-routing law: sim i's parameter row IS row i -- the recursive
+# read and the drop+head reference read agree, bounded by lt_ok(i, nrows)
+# (the sweep_nth_route pattern at the row level; past the end the claim is
+# UNSTATABLE -- the witness cannot be fabricated).
+law sweep_row_nth:
+  for +rows: List<&2, List<&2, F32>>
+  for i: Nat
+  for h: R.lt_ok(i, S.rows_len(rows))
+  {S.sweep_row(rows, i) == S.sweep_row_ref(rows, i) : List<&2, F32>}
+
+# the field read: row i's field j IS field j -- sweep_nth_route at the
+# row's word level (sweep_field IS sweep_nth(row i, ·); the reference read
+# is the drop+head sweep_word).  The row witness pins the row exists; the
+# field witness pins the field is inside the row.
+law sweep_field_nth:
+  for +rows: List<&2, List<&2, F32>>
+  for i: Nat
+  for j: Nat
+  for hi: R.lt_ok(i, S.rows_len(rows))
+  for hj: R.lt_ok(j, S.sweep_len(S.sweep_row(rows, i)))
+  {S.sweep_field(rows, i, j) == S.sweep_word(S.sweep_row(rows, i), j) : F32}
+
+# the row-major ADDRESS brick: row (1+i)'s field j lives at
+# w + (i*w + j) -- the mul-distributivity step over the row counter that
+# the wire-agreement law recurses through (the divmod family's brick
+# pattern; Nat.mul(1n+i, w) reduces to w + i*w, add_assoc regroups).
+law flat_addr_step:
+  for +i: Nat
+  for +w: Nat
+  for +j: Nat
+  {S.flat_addr(1n+i, w, j) == Nat.add(w, S.flat_addr(i, w, j)) : Nat}
+
+# the row-major WIRE agreement: the closed-form address read and the
+# structural skip-rows read agree -- flat[i*w + j] IS row i's field j.
+# Unconditional: past-the-end reads default to 0.0 on both sides (a short
+# final row and an out-of-range row agree), and the i = 0 base is
+# definitional (0*w + j reduces to j).
+law flat_nth:
+  for +flat: List<&2, F32>
+  for +w: Nat
+  for i: Nat
+  for j: Nat
+  {S.flat_at(flat, i, w, j) == S.flat_read(flat, i, w, j) : F32}
+
+# the COLUMN->ROW assembly law: the assembled row's field j IS column j's
+# element i -- row i field j == column j's i-th value.  This pins the TVB
+# API's orientation: params={"coupling_scale": [v0, ..]} varies the
+# parameter ACROSS sims down the column, and the per-sim row is the
+# assembly.  Unconditional: past-the-end reads default to 0.0 on both
+# sides (a short column and the assembled row agree).
+law col_to_row:
+  for +cols: List<&2, List<&2, F32>>
+  for i: Nat
+  for j: Nat
+  {S.sweep_nth(S.col_row(cols, i), j) == S.sweep_nth(S.col_nth(cols, j), i) : F32}
+
+# the instance pin (the csr_row_good convention): a literal 2-sim x 2-param
+# COLUMN table -- params={"a": [0.5, 1.5], "b": [2.5, 3.5]} -- assembles
+# sim 0's row [0.5, 2.5] and sim 1's row [1.5, 3.5]: element i of every
+# column, in column order.
+law col_row_inst_0:
+  {S.col_row((0.5 <> 1.5 <> Nil{}) <> (2.5 <> 3.5 <> Nil{}) <> Nil{}, 0n)
+   == 0.5 <> 2.5 <> Nil{} : List<&2, F32>}
+
+law col_row_inst_1:
+  {S.col_row((0.5 <> 1.5 <> Nil{}) <> (2.5 <> 3.5 <> Nil{}) <> Nil{}, 1n)
+   == 1.5 <> 3.5 <> Nil{} : List<&2, F32>}
+
+# --------------------------------------------------------------------------
+# the ROW-TABLE validator: sweep_ok's multi-param generalization -- the
+# width conjunct stays at 8 (the current engine), the ROW-SHAPE conjunct
+# (every row has exactly wp fields) is new, R.ok on the shared config is
+# unchanged.  The three and-elimination halves:
+# --------------------------------------------------------------------------
+
+law sweep_rows_ok_len:
+  for +rows: List<&2, List<&2, F32>>
+  for +wp: Nat
+  for +c: R.Config
+  for +h: {S.sweep_rows_ok(rows, wp, c) == True{} : Bool}
+  {Nat.is_le(S.rows_len(rows), 8n) == True{} : Bool}
+
+law sweep_rows_ok_shape:
+  for +rows: List<&2, List<&2, F32>>
+  for +wp: Nat
+  for +c: R.Config
+  for +h: {S.sweep_rows_ok(rows, wp, c) == True{} : Bool}
+  {S.rows_shape_ok(rows, wp) == True{} : Bool}
+
+law sweep_rows_ok_cfg:
+  for +rows: List<&2, List<&2, F32>>
+  for +wp: Nat
+  for +c: R.Config
+  for +h: {S.sweep_rows_ok(rows, wp, c) == True{} : Bool}
+  {R.ok(c) == True{} : Bool}
+
+# the per-row inversion (the sweep_valid_nth / lanes_nth_valid pattern):
+# every IN-BOUNDS row of a validated table has exactly wp fields -- the
+# every-row fold instantiated at the row the fan routes.  The bounds
+# witness is load-bearing: past the table the row reads empty (0 fields),
+# and the claim would overreach.
+law sweep_rows_shape_nth:
+  for +rows: List<&2, List<&2, F32>>
+  for +wp: Nat
+  for +c: R.Config
+  for +h: {S.sweep_rows_ok(rows, wp, c) == True{} : Bool}
+  for i: Nat
+  for hi: R.lt_ok(i, S.rows_len(rows))
+  {Nat.is_eq(S.sweep_len(S.sweep_row(rows, i)), wp) == True{} : Bool}
