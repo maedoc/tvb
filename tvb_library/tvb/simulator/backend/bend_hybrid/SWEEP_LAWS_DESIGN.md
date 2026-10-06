@@ -145,3 +145,62 @@ sequential computation — the refactor a runtime cannot violate.
 plumbing, the packed-word roundtrip family, the `cs_row` 2-level read
 laws) all exist. The hardest single law is the flat/nested agreement
 (row-major indexing); the rest are instantiation or short inductions.
+
+## Refresh 2026-10-05 — what the hybrid demos change
+
+Re-read `tvb_documentation/demos/simulate_hybrid_*.py`. Three findings
+that reshape the plan:
+
+1. **The sweep schema question is answered: COLUMNS.** The TVB sweep API
+   is named keys to per-parameter value lists —
+   `backend.sweep(params={"coupling_scale": [v0, ..]})`. So the JSON
+   sweep ingress should be per-parameter columns, and the per-sim row is
+   ASSEMBLED from them: row i field j = column j's i-th value. The
+   row-assembly law (col_to_row) pins that orientation; the row-major
+   flat_nth brick pins the wire layout.
+2. **The demos sweep 20 points** — over the 8-wide fan. The
+   general-width laws (fan_exact at abstract w, the chunked-split
+   coverage law) are not a nicety; the real engine needs them now.
+   Also: the demo verifies parallel == sequential bit-exactly as a TEST
+   — the engine-side mirror of fan_gather_order; the law is the
+   spec-level version of the same property.
+3. **Subnets are heterogeneous MODELS, not just heterogeneous dts.**
+   getting_started pairs JansenRit (cortex) with ReducedSetFitzHughNagumo
+   (thalamus): different state_variables, different cvars, and the
+   InterProjection maps NAMED cvars across models (source_cvar='y1' on
+   JansenRit, target_cvar='xi' on FHN) — the coupling slot is
+   MODEL-RELATIVE, resolved against each model's own state_variables.
+
+## The config-complexity layer (the refreshed plan's new family)
+
+The current Config carries per-lane periods only. A model-aware config
+carries, per subnet: (model id, n_svars, the cvar list) — and per
+projection: source/target cvar indices into the RESPECTIVE models. The
+new law family:
+
+- `proj_src_cvar_bounded` / `proj_tgt_cvar_bounded`: a projection's cvar
+  indices are within the source/target subnet's model cvar count — the
+  proj_src_bounded analog one level down (model-relative). The validator
+  conjunct family (ok inversion, per-index forms) follows the section-6
+  pattern.
+- the name-resolution law: the cvar NAME resolves against the model's
+  state_variables to exactly the index the projection uses (a table
+  lookup law — the JSON string resolution pinned).
+- and the sweep composes: a sweep's per-sim configs are the base config
+  plus the named column values patched into their slots (the field-map
+  law), each validated by the model-aware ok.
+
+## Sweep v2 (the generalization being implemented now)
+
+- fan_exact at general width w (the width witness becomes le_ok(n, w);
+  fan8_exact stays as the w=8 instance; the existing proof already
+  inducts over the general fan_go).
+- the multi-param row table: 2-level rows (the cs_row/cs_get_row shape
+  from coupling.bend, whose read laws are proved); sweep_row_nth /
+  sweep_field_nth; the row-major flat_nth brick (the one new arithmetic:
+  (1n+i)*w + j = w + (i*w + j)); the column->row assembly law
+  (col_to_row: row i field j == column j's i-th element).
+- sweep_ok gains a row-shape conjunct (every row has exactly w_params
+  fields); the width bound stays at 8 for the current engine.
+- the JSON sweep ingress follows (columns; total decode; the
+  json_read_fresh analog).
