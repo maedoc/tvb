@@ -2,7 +2,7 @@
 
 > **New here?** Start with [README.md](README.md) — the guided tour (goals, data structures, the high-level laws). This file is a deep dive.
 
-Scope note: the 159-law suite proves the ROUTING contract (which samples,
+Scope note: the 175-law suite proves the ROUTING contract (which samples,
 in what order, how old, no aliasing, no double-writes) and deliberately
 says nothing about float VALUES — op-order is the kernel's contract and
 the numba template is the value reference. This note answers the
@@ -25,7 +25,7 @@ claims with very different costs.
 
 ```mermaid
 flowchart TD
-  A["router.bend — Line and Win — PROVED (159 laws)"] --> B["Tier 1 — kernel wavg spec — which cells / divisor / fold order"]
+  A["router.bend — Line and Win — PROVED (175 laws)"] --> B["Tier 1 — kernel wavg spec — which cells / divisor / fold order"]
   B --> C["Tier 2 — exact fixed-point model — value bounds PROVED"]
   C --> D["unsafe bridge — model-to-F32 refinement — trusted or tested"]
   D --> E["numba template — the actual float average"]

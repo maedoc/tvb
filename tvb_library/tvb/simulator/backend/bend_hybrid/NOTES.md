@@ -249,10 +249,11 @@ companion.
 - bendcheck's lawcheck runs on 2.0.34 and fuzzes our LAWS_router clean (49 of
   147 laws x 200/1000 tests, seeds 1/7, 0 counterexamples); F32, custom-ADT,
   pinned-instance and decider-typed laws are outside its generator set.
-- Known gap — mutation testing (manual, /tmp copy) found a SURVIVING MUTANT:
-  route_read's d=0 branch `win` field is unpinned by the 147 laws (`l_win`
-  appears in no claim). Candidate fix-law if load-bearing:
-  `l_win(route_read(n,d,num,den,win)) == win`.
+- Mutation testing (manual, /tmp copy) found a SURVIVING MUTANT that has
+  since been FIXED: route_read's d=0 branch `win` field was unpinned by
+  the 147 laws (`l_win` appeared in no claim); law `l_win_pass_through`
+  (commit 49bf6fefc) now pins the pass-through in both branches. The
+  pattern to keep: a surviving mutant becomes a law.
 - --verdict trust: issue-1182 (checker/BendTT mismatch on opaque `~F` templates
   with dependent-equality results) reproduced UNFIXED on 2.0.34, but it fails
   closed and our files contain no `~` binders. Keep --verdict as the gate, keep

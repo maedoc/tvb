@@ -70,6 +70,65 @@ The contract itself, as three named capstones (section 8 of
 
 ---
 
+## The router, in plain terms
+
+**One master clock, many timesteps.** The engine ticks a single master
+clock. Each subnet is a **lane** — three natural numbers: a period `k`
+(publish one new sample every `k` master ticks), a countdown to the next
+publication, and a counter of samples published so far
+(`Lane{k, left, newest}`). A fast lane (`k = 1`) publishes every tick; a
+slow lane (`k = 3`) publishes every third tick and *holds* its newest
+sample in between (zero-order hold). The countdown discipline in action,
+for a lane with `k = 3` just after a publication:
+
+| master tick | countdown before the tick | publishes? | samples published after |
+|---|---|---|---|
+| 0 | 2 | no | 1 |
+| 1 | 1 | no | 1 |
+| 2 | 0 | **yes** | 2 |
+| 3 | 2 | no | 2 |
+
+Between publications the held sample is exactly what every consumer sees
+— so "how stale can a slow lane's input be" and "what does a monitor
+average" are *schedule* questions, answered by the Q1 laws below.
+
+**Coupling is projections.** A projection (`Proj{src, tgt, d, win, tc}`)
+says: target lane `tgt` reads source lane `src`, `d` of the source's own
+publications back (a slow source's `d = 2` is `2k` master ticks), averaging
+the `win` samples ending at that point — the anti-alias window for a slow
+consumer of a fast signal — and writes the result into the target's
+coupling slot `tc` (the engine's `c[var][j] +=`).
+
+**What the router hands the kernel.** For each projection at each tick,
+the routing decision is one `Line{i0, i1, num, den, win}`: the two
+*adjacent* source samples to interpolate between, the interpolation
+fraction (where the tick falls inside the source's period), and the window
+size. Every field is a natural number — the router is pure index
+arithmetic, which is exactly why it is provable; the floats begin past the
+Line, in the kernel.
+
+**The history has two faces.** The *tape*: sample `i` lives at index `i`
+(the semantics, and the subject of every law). The *ring*: the engine's
+slot-addressed buffer (the implementation — the correspondence is proved).
+The **horizon** bounds how deep a read may reach, and the validator
+rejects any config whose reads would reach past it — that is what keeps
+the ring from aliasing two delays onto one slot.
+
+```mermaid
+flowchart LR
+  subgraph lanes["two lanes -- two timesteps"]
+    F["fast lane -- period 1 -- publishes every tick"]
+    S["slow lane -- period 2 -- publishes every other tick"]
+  end
+  F -- "edge -- delay d -- window w" --> S
+  S -- "edge -- delay d -- interpolated read" --> F
+  H["the history -- sample i lives at tick i"]
+  F --> H
+  S --> H
+  H --> R["the router -- pure Nat index arithmetic"]
+  R --> L["a Line per edge per tick -- i0 i1 num den win -- the float kernel begins here"]
+```
+
 ## 1. The data structures
 
 | Type | Where | What it is |
@@ -102,6 +161,56 @@ Everything through `Line`/`Win` is **Nat**: the router is a pure
 index-level object and that is what makes it provable in Bend's
 term-equality world. The kernel (`kernel.bend`) is the only place F32
 appears, and only as opaque terms with pinned operator order.
+
+## How to read the laws
+
+**A law is a claim about all inputs, machine-checked — not a test.** Take
+the master law of the read (§2.2):
+
+    law read_fresh:
+      for n: Nat
+      for d: Nat
+      for num: Nat
+      for den: Nat
+      for win: Nat
+      {Nat.is_le(R.l_i1(R.route_read(n, d, num, den, win)), n) == True{} : Bool}
+
+In plain words: *for every history length `n`, every delay `d`, every
+interpolation fraction and window, the freshest endpoint the read produces
+is at or behind the newest published sample.* The checker
+(`bend PROOF_router.bend`, re-checked by the Lean-proved kernel with
+`--verdict`) certifies this for **all** values of the quantified arguments
+— there are no test cases, because there is nothing left to test.
+
+**Anatomy.** The `for ...` lines are the quantifiers ("for every"). Side
+conditions appear as extra arguments: `for h: R.le_ok(d + w, n)` reads
+*provided d + w ≤ n* — the condition is carried as a small proof object
+rather than a Bool for a technical reason (the checker needs to unfold it
+during inductions); you can always read it as an ordinary inequality. The
+claim in braces is the conclusion.
+
+**The ladder — why 175 laws.** Roughly a quarter of the file is arithmetic
+*bricks* (`add_succ`, `sub_add_cancel`, the divmod family): small facts
+the capstone proofs name. When a proof needed a fact that did not exist
+yet, that fact became a new law — the file's section headers mark the
+families, and the ~25 laws this tour names are the ones a reviewer should
+focus on; the rest is the machinery that makes them true.
+
+**Falsifiability.** `bad/` holds 17 claims that must *fail* — a wrong
+window count, a regrouped blend, a colliding write, a delay past the
+horizon. The gates re-run them and require rejection. A suite that cannot
+fail proves nothing.
+
+**Instances pin the intended reading.** Where a convention could be read
+two ways (does the window include its endpoints?), a literal law answers
+with numbers (`win_cells_instance`: `lo = 1, w = 2` picks ticks 2 and 3).
+
+**Floats are out of scope by design.** The laws pin *operator order* —
+which additions and multiplications happen in which order — because in
+IEEE-754 that order *is* the observable behaviour. What the values
+numerically are is the numba template's contract, tested by the parity
+drivers; [VALUE_LEVEL_EXPLAINER.md](VALUE_LEVEL_EXPLAINER.md) lays out
+what could be proved about values, and at what cost.
 
 ## 2. Walking the high-level laws
 
@@ -154,9 +263,10 @@ ticks **(lo, hi]** — `lo+1 .. hi` inclusive (pinned by
 - **`window_span`** — the window covers **exactly `w` samples**
   (`hi − lo = w`) whenever it fits the history.
 - **`window_ordered`** / **`window_head_age`** — the ends are ordered,
-  and the window's head is `d + w` ticks behind the stream head: the lag
-  is the price of the window, and it is forced (making the input fresher
-  means either reading past the window's start or shrinking it).
+  and the window's oldest member sits `d + w − 1` ticks behind the head of
+  the stream (its left endpoint, `d + w`): the lag is the price of the
+  window, and it is forced (making the input fresher means either reading
+  past the window's start or shrinking it).
 
 ### 2.4 No aliasing, no double writes
 
@@ -327,9 +437,9 @@ against an independent Python transcription), `compare_monitor.py`.
 
 ## Part II — the engine prototype (preserved from the original README)
 
-*The `mcore.bend`/`mengine.bend`/`montbrio_sweep.bend` prototype this law suite grew around — measured results, idioms, recorded bugs, and limits. Preserved verbatim (headings demoted one level).*
+*The `mcore.bend`/`mengine.bend`/`montbrio_sweep.bend` prototype this law suite grew around — measured results, idioms, recorded bugs, and limits. Preserved from the original README (headings demoted one level; the file table's entry points updated to the converged docs).*
 
-## Bend MontbrioPazoRoxin hybrid prototype
+### Bend MontbrioPazoRoxin hybrid prototype
 
 A minimal, idiomatic Bend port of the numba hybrid kernel
 (`tvb/simulator/backend/nb_hybrid.py`) for one subnet, one mode, MontbrioPazoRoxin,
