@@ -12,6 +12,7 @@ import Base
 import ./LAWS_sweep.bend as Laws
 import ./sweep.bend as S
 import ./router.bend as R
+import ./PROOF_router.bend as PR
 
 # False is not True: the motive sends True to Empty, so transporting along a
 # proof of {False == True} lands in Empty and anything follows.
@@ -241,3 +242,96 @@ def fan_gather_order_go(w: Nat, a: Nat, runs: List<&2, String>,
 
 def Laws.fan_gather_order(runs, n, hw):
   fan_gather_order_go(8n, n, runs, hw)
+
+# --------------------------------------------------------------------------
+# Group 4 -- the composition
+# --------------------------------------------------------------------------
+# The validator's two conjuncts are and-eliminations (PR.and_elim_l_go /
+# PR.and_elim_r_go, PROOF_router.bend's plain helpers, which re-export
+# across module imports where filled laws do not).  sweep_valid_nth is
+# fan8_exact with the width witness derived from sweep_ok_width (Bool
+# form converted to the le_ok decider by PR.b_le).  The capstone chains
+# three cong steps under Equal.trans -- one per component of the triple
+# pair equality -- with the third component's proof the bridge call
+# PR.routing_contract_at (Laws.routing_contract at the shared config,
+# ties {==} since the law instantiates ls/ps definitionally).
+
+def Laws.sweep_ok_width(t, c, h):
+  PR.and_elim_l_go(Nat.is_le(S.sweep_len(t), 8n), R.ok(c), h)
+
+def Laws.sweep_ok_cfg(t, c, h):
+  PR.and_elim_r_go(Nat.is_le(S.sweep_len(t), 8n), R.ok(c), h)
+
+def Laws.sweep_valid_nth(t, c, runs, h, k, hk):
+  Laws.fan8_exact(runs, S.sweep_len(t), k,
+                  PR.b_le(S.sweep_len(t), 8n,
+                          PR.and_elim_l_go(Nat.is_le(S.sweep_len(t), 8n), R.ok(c), h)),
+                  hk)
+
+# the Type->Bool direction for a lt_ok witness (PR.le_ok_iff is a law
+# fill and does not re-export, so its go-lemma is copied here): lt_ok(i, L)
+# is definitionally le_ok(Nat.add(i, 1n), L), so the capstone calls this at
+# (1n+i, L) with hk riding in as the le_ok witness.  One structural
+# induction; the Empty arm is absurd through the witness, the x = 0n arms
+# close by {==} (cmp(0n, _) is Lt, is_le(Lt) is True).
+def sw_le_b_go(x: Nat, y: Nat, h: R.le_ok(x, y))
+  -> {Nat.is_le(x, y) == True{} : Bool}:
+  match x y:
+    case 0n 0n:
+      {==}
+    case 0n 1n+q:
+      {==}
+    case 1n+p 0n:
+      Empty.absurd({Nat.is_le(1n+p, 0n) == True{} : Bool}, h)
+    case 1n+p 1n+q:
+      sw_le_b_go(p, q, h)
+
+def sw_le_b(x: Nat, y: Nat, h: R.le_ok(x, y))
+  -> {Nat.is_le(x, y) == True{} : Bool}:
+  sw_le_b_go(x, y, h)
+
+# the capstone.  h is needed twice (both conjunct eliminations), so it is
+# re-bound + (equality proofs are Data: the le_ok_iff idiom).  hk is a
+# Type-valued witness -- NOT +able -- so it is converted ONCE to its Bool
+# form ({is_le(1n+i, len) == True}, exactly lt_ok(i, len) unfolded) and
+# converted back per use with PR.b_le (the NOTES bool-witness idiom).
+def Laws.sweep_contract(t, c, runs, tk, i, h, hk, hb):
+  +h2 = h
+  +hkB = sw_le_b(Nat.add(i, 1n), S.sweep_len(t), hk)
+  hwB = PR.and_elim_l_go(Nat.is_le(S.sweep_len(t), 8n), R.ok(c), h)
+  hok = PR.and_elim_r_go(Nat.is_le(S.sweep_len(t), 8n), R.ok(c), h2)
+  hw = PR.b_le(S.sweep_len(t), 8n, hwB)
+  hroute = Laws.sweep_nth_route(t, i,
+                                PR.b_le(Nat.add(i, 1n), S.sweep_len(t), hkB))
+  hfan = Laws.fan8_exact(runs, S.sweep_len(t), i, hw,
+                         PR.b_le(Nat.add(i, 1n), S.sweep_len(t), hkB))
+  hrun = PR.routing_contract_at(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c),
+                                tk, i, hok, {==}, {==}, hb)
+  Equal.trans(F32 & (String & Bool),
+    (S.sweep_nth(t, i),
+     S.str_nth(S.fan8(S.sweep_len(t), runs), i),
+     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i)),
+    (S.sweep_word(t, i),
+     S.str_nth(S.fan8(S.sweep_len(t), runs), i),
+     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i)),
+    (S.sweep_word(t, i), S.str_nth(runs, i), True{}),
+    Equal.cong(F32, F32 & (String & Bool),
+               w => (w,
+                     S.str_nth(S.fan8(S.sweep_len(t), runs), i),
+                     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i)),
+               S.sweep_nth(t, i), S.sweep_word(t, i), hroute),
+    Equal.trans(F32 & (String & Bool),
+      (S.sweep_word(t, i),
+       S.str_nth(S.fan8(S.sweep_len(t), runs), i),
+       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i)),
+      (S.sweep_word(t, i), S.str_nth(runs, i),
+       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i)),
+      (S.sweep_word(t, i), S.str_nth(runs, i), True{}),
+      Equal.cong(String, F32 & (String & Bool),
+                 w => (S.sweep_word(t, i), w,
+                       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i)),
+                 S.str_nth(S.fan8(S.sweep_len(t), runs), i), S.str_nth(runs, i), hfan),
+      Equal.cong(Bool, F32 & (String & Bool),
+                 w => (S.sweep_word(t, i), S.str_nth(runs, i), w),
+                 S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i),
+                 True{}, hrun)))

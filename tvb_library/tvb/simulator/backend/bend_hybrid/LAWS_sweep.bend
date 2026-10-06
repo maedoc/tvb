@@ -3,8 +3,17 @@
 # tests/run_sweep.sh (verdict + the width negative control + the smoke).
 #
 # Phase 1: Groups 1-3 of SWEEP_LAWS_DESIGN.md -- row routing, fan
-# coverage, gather.  Groups 4-5 (the composition contract and the
-# parallelism invariance) are a later phase.
+# coverage, gather.  Phase 2: Group 4 -- the sweep validator (sweep_ok)
+# and the composition capstone (sweep_contract); Group 5's
+# parallel-vs-sequential claim is phase 1's fan_gather_order.
+#
+# REMAINING GAP -- the JSON sweep ingress: the schema is an open design
+# question (per-sim rows {"sims": [{..}, ..]} vs per-parameter columns
+# {"scale": [..], ..}); the table spec above is agnostic.  Once decided,
+# the ingress laws pin it with the json_ingest state-machine pattern
+# (total decode: garbage decodes to the empty sweep), the instance pins,
+# and a json_sweep_contract quantified over all strings (the
+# json_read_fresh analog) composing onto sweep_contract.
 #
 # Law style follows LAWS_router.bend: binders reused inside a law carry
 # `+` (Data only -- a function-typed binder cannot be `+`); witness-carrying
@@ -118,3 +127,71 @@ law fan_gather_order:
   for n: Nat
   for hw: R.le_ok(n, 8n)
   {S.gather(S.fan8(n, runs)) == S.seq_gather(n, runs) : String}
+
+# --------------------------------------------------------------------------
+# Group 4 -- the composition: the sweep validator and the sweep contract
+# --------------------------------------------------------------------------
+
+# and-elimination, the width half: a validated sweep's table fits the
+# fixed 8-wide fan -- fan8_exact's le_ok(n, 8) witness, promoted to a
+# validator conjunct so an n_sweep > 8 sweep is REJECTED, not silently
+# truncated (the ok_lanes pattern).
+law sweep_ok_width:
+  for +t: List<&2, F32>
+  for +c: R.Config
+  for +h: {S.sweep_ok(t, c) == True{} : Bool}
+  {Nat.is_le(S.sweep_len(t), 8n) == True{} : Bool}
+
+# and-elimination, the config half: a validated sweep's SHARED config
+# passes the per-sim validator R.ok -- one ok() call covers the whole
+# Monte-Carlo batch, since only the swept parameter varies per sim.
+law sweep_ok_cfg:
+  for +t: List<&2, F32>
+  for +c: R.Config
+  for +h: {S.sweep_ok(t, c) == True{} : Bool}
+  {R.ok(c) == True{} : Bool}
+
+# every in-bounds row of a validated sweep exists (the lt_ok witness is
+# exactly that) and is the row the fan routes: lane k's output IS run k,
+# with the width witness DERIVED from the validator instead of assumed --
+# the lanes_nth_valid pattern (fan8_exact swept through sweep_ok).
+law sweep_valid_nth:
+  for +t: List<&2, F32>
+  for +c: R.Config
+  for +runs: List<&2, String>
+  for +h: {S.sweep_ok(t, c) == True{} : Bool}
+  for k: Nat
+  for hk: R.lt_ok(k, S.sweep_len(t))
+  {S.str_nth(S.fan8(S.sweep_len(t), runs), k) == S.str_nth(runs, k) : String}
+
+# THE SWEEP CONTRACT -- the Monte-Carlo capstone, ONE claim over the
+# triple (param in, result out, routing clean).  For a validated sweep
+# and an in-bounds sim i:
+#   (a) PARAMS IN: the parameter reaching sim i IS table row i
+#       (sweep_nth_route instantiated);
+#   (b) RESULTS OUT: lane i's output IS run i in the fixed 8-wide fan
+#       (fan8_exact instantiated, the width witness from sweep_ok_width);
+#   (c) ROUTING CLEAN: the shared config's routing contract holds
+#       (Laws.routing_contract instantiated at the shared config -- its
+#       conclusion bundle is S.routing_bundle; discharged by the bridge
+#       routing_contract_at in PROOF_router.bend).
+# The three halves are heterogeneous (an F32 equality, a String equality
+# and a Bool bundle), so Bool.and cannot carry them; the Type-level
+# conjunction is the pair equality below -- (F32 & (String & Bool)) --
+# which holds exactly when every component does.  The bundle expression
+# is factored into S.routing_bundle so the law reads as one claim.
+law sweep_contract:
+  for +t: List<&2, F32>
+  for +c: R.Config
+  for +runs: List<&2, String>
+  for +tk: Nat
+  for +i: Nat
+  for +h: {S.sweep_ok(t, c) == True{} : Bool}
+  for hk: R.lt_ok(i, S.sweep_len(t))
+  for hb: R.lt_ok(i, R.projs_len(R.cfg_projs(c)))
+  {(S.sweep_nth(t, i),
+    S.str_nth(S.fan8(S.sweep_len(t), runs), i),
+    S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, i))
+   ==
+   (S.sweep_word(t, i), S.str_nth(runs, i), True{})
+   : F32 & (String & Bool)}

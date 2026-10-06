@@ -288,3 +288,25 @@ is order-exact (sim i's output lands at output row i); (5) per-sim config
 validation composes with the per-sim routing contract. montbrio_sweep.bend
 today uses a packed-word job file (words_loop / j_* accessors) -- the JSON
 variant is the design target.
+
+## Cross-module law instantiation (2026-10-05, fifth session)
+
+- Filled laws (`def Laws.x` in a PROOF file) do NOT re-export across
+  module imports -- not bare, not alias-qualified (`PR.Laws.x`), not
+  through a transitive import chain. Plain defs DO re-export. So to
+  compose an already-proved law from another proof file, add a one-call
+  PLAIN bridge def next to the fill, with the conclusion type spelled
+  out: PROOF_router.bend's `routing_contract_at` (body:
+  `Laws.routing_contract(...)`), consumed by PROOF_sweep.bend as
+  `PR.routing_contract_at(...)`. Verified: fills unreachable through
+  every import form; the bridge form composes and stays --verdict green.
+- Related: equality proofs (`{a == b : T}` inhabitants) ARE `+`-able
+  (rebind `+h2 = h` to use a hypothesis twice); Type-valued witnesses
+  (`lt_ok`/`le_ok`) are not -- convert once to Bool form and back per
+  use (`sw_le_b` + `PR.b_le` in PROOF_sweep.bend; note `lt_ok(a, b)` is
+  definitionally `le_ok(Nat.add(a, 1n), b)`).
+- A heterogeneous conjunction (F32 / String / Bool claims) cannot go
+  through `Bool.and`; the one-claim shape that works is a pair equality
+  `(a, b, c) == (a', b', c') : A & (B & C)` (right-nested), proved by
+  per-component `Equal.cong` steps under `Equal.trans` -- see
+  `sweep_contract` in LAWS_sweep.bend.

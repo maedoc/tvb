@@ -191,3 +191,37 @@ def seq_gather(+n: Nat, +runs: List<&2, String>) -> String:
       ""
     case 1n+s:
       str_nth(runs, 0n) ++ seq_gather(s, str_tail(runs))
+
+# --------------------------------------------------------------------------
+# the sweep validator and the contract bundle (Group 4, the composition)
+# --------------------------------------------------------------------------
+
+# THE SWEEP VALIDATOR: the conjunction of the two silent-failure gates.
+#   (a) the WIDTH BOUND: the table fits the fixed 8-wide fan.  This is
+#       fan8_exact's le_ok(n, 8) witness promoted to a VALIDATOR conjunct:
+#       an n_sweep > 8 sweep is a REJECTED config, not a silently
+#       truncated run (the drop this layer polices).
+#   (b) the SHARED CONFIG's R.ok: every sim of the sweep runs the same
+#       base config -- only the swept parameter varies -- so one ok()
+#       call covers the whole Monte-Carlo batch.
+def sweep_ok(+t: List<&2, F32>, +c: R.Config) -> Bool:
+  Bool.and(Nat.is_le(sweep_len(t), 8n), R.ok(c))
+
+# the routing contract's conclusion BUNDLE, as one Bool expression: the
+# third conjunct of the sweep capstone (sweep_contract in LAWS_sweep.bend)
+# is this bundle equal to True -- Laws.routing_contract's conclusion
+# (PROOF_router.bend) at the shared config, spelled here so the capstone
+# reads as one claim.  The bridge def routing_contract_at in
+# PROOF_router.bend discharges it (filled laws do not re-export across
+# module imports; plain defs do).
+def routing_bundle(+c: R.Config, +ls: List<&2, R.Lane>, +ps: List<&2, R.Proj>,
+                   +t: Nat, +i: Nat) -> Bool:
+  Bool.and(Nat.is_le(R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                     R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                               R.proj_src(R.nth_proj(ps, i))))),
+           Bool.and(Nat.is_le(Nat.sub(R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                             R.proj_src(R.nth_proj(ps, i)))),
+                                      R.cfg_horizon(c)),
+                              R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i))),
+                    Nat.is_le(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                              R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)))))

@@ -4362,3 +4362,30 @@ def Laws.cs_add_read(cs, tgt, tc, v, zero):
 def Laws.couple_enter(ls, p, tape, ic, den, acc, zero, cs):
   Laws.cs_add_read(cs, R.proj_tgt(p), R.proj_tc(p),
                    K.f32_average(C.edge_cells(ls, p, tape, ic), den, acc), zero)
+
+# --------------------------------------------------------------------------
+# 8c. the sweep-composition bridge (phase 2 of the sweep law family)
+# --------------------------------------------------------------------------
+# routing_contract as a PLAIN def, so PROOF_sweep.bend can instantiate it
+# at the shared config: filled laws do not re-export across module
+# imports, plain defs do.  The body is one call -- the proof is
+# routing_contract's, already kernel-checked in this file; the conclusion
+# type is spelled out so the sweep capstone's third conjunct
+# (S.routing_bundle == True) is exactly this claim up to unfolding.
+def routing_contract_at(+c: R.Config, +ls: List<&2, R.Lane>, +ps: List<&2, R.Proj>,
+                        +t: Nat, +i: Nat,
+                        h: {R.ok(c) == True{} : Bool},
+                        hls: {ls == R.init_lanes(R.cfg_lanes(c)) : List<&2, R.Lane>},
+                        hps: {ps == R.cfg_projs(c) : List<&2, R.Proj>},
+                        hb: R.lt_ok(i, R.projs_len(ps)))
+  -> {Bool.and(Nat.is_le(R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                      R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                R.proj_src(R.nth_proj(ps, i))))),
+      Bool.and(Nat.is_le(Nat.sub(R.lane_newest(R.nth_lane(R.tick_lanes(R.ticks(t, ls, ps)),
+                                                         R.proj_src(R.nth_proj(ps, i)))),
+                                  R.cfg_horizon(c)),
+                         R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i))),
+               Nat.is_le(R.l_i0(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)),
+                          R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)))))
+   == True{} : Bool}:
+  Laws.routing_contract(c, ls, ps, t, i, h, hls, hps, hb)
