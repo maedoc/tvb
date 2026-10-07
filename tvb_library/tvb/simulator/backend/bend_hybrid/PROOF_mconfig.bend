@@ -18,6 +18,7 @@ import ./LAWS_mconfig.bend as Laws
 import ./mconfig.bend as M
 import ./router.bend as R
 import ./sweep.bend as S
+import ./json_ingest.bend as J
 import ./PROOF_router.bend as PR
 
 # False is not True: the motive sends True to Empty, so transporting along a
@@ -568,3 +569,219 @@ def Laws.cvar_resolve_bounded(nps, ms, shapes, c, i, hib, hok):
                M.find_name(M.nth_snames(ms, M.mproj_src(v)), M.nproj_sname(np)),
                M.mproj_svar(v), hsA),
     hbound)
+
+# --------------------------------------------------------------------------
+# P4b -- the NAMED-CONFIG JSON INGRESS: proofs.
+# --------------------------------------------------------------------------
+# The instance pins: pure computation on literal text -- the tokenizer,
+# the state machine, the assembly and the validator all compute on
+# concrete input (the json_decode_instance convention).
+def Laws.json_named_instance():
+  {==}
+
+def Laws.json_named_garbage():
+  {==}
+
+# jn_zip_len: the mview_len induction at the zip -- peel one projection
+# per step; the name lists ride through str_tail (the mview pattern: the
+# head's fields normalize without case-splitting the lists).
+def jn_zip_len_go(ps: List<&2, R.Proj>, +svs: List<&2, String>, +tvs: List<&2, String>)
+    -> {M.nprojs_len(J.zip_nprojs(ps, svs, tvs)) == R.projs_len(ps) : Nat}:
+  match ps:
+    case Nil{}:
+      {==}
+    case p <> t:
+      Equal.cong(Nat, Nat, n => Nat.add(1n, n),
+                 M.nprojs_len(J.zip_nprojs(t, S.str_tail(svs), S.str_tail(tvs))),
+                 R.projs_len(t),
+                 jn_zip_len_go(t, S.str_tail(svs), S.str_tail(tvs)))
+
+def Laws.jn_zip_len(ps, svs, tvs):
+  jn_zip_len_go(ps, svs, tvs)
+
+# json_named_resolve: the SOURCE half IS cvar_resolve_bounded instantiated
+# at the decoded values (nps = the assembled named projections, ms = the
+# decoded name lists, shapes = the name lists' lengths); the TARGET half
+# is the same composition on the other side -- the pairing half
+# (tcvar_pair_go) rewrites the resolved index onto the view row's tcvar,
+# and the mc_ok target bound at that row (mc_tgt_nth through the
+# and-eliminated conjunct, the index transported through mnview_len by
+# the Bool roundtrip) finishes.  No new induction: every piece is an
+# already-proved fill or go-lemma.
+def Laws.json_named_resolve(s, i, hib, h):
+  +d = J.json_named_decode(s)
+  +nps = J.jn_nprojs(d)
+  +ms = J.jn_snames(d)
+  +sh = J.jn_shapes(d)
+  +vw = J.jn_view(d)
+  +v = M.nth_mproj(vw, i)
+  +c = J.jn_cfg(d)
+  +np = M.nth_nproj(nps, i)
+  hMC2 = PR.and_elim_r_go(
+           J.jn_valid(d),
+           Bool.and(Nat.is_eq(J.names_len(J.jn_svars(d)), R.projs_len(R.cfg_projs(c))),
+                    Bool.and(Nat.is_eq(J.names_len(J.jn_tcvars(d)),
+                                       R.projs_len(R.cfg_projs(c))),
+                             M.mc_ok(sh, vw, c))),
+           h)
+  hMC1 = PR.and_elim_r_go(
+           Nat.is_eq(J.names_len(J.jn_svars(d)), R.projs_len(R.cfg_projs(c))),
+           Bool.and(Nat.is_eq(J.names_len(J.jn_tcvars(d)), R.projs_len(R.cfg_projs(c))),
+                    M.mc_ok(sh, vw, c)),
+           hMC2)
+  +hMC = PR.and_elim_r_go(
+          Nat.is_eq(J.names_len(J.jn_tcvars(d)), R.projs_len(R.cfg_projs(c))),
+          M.mc_ok(sh, vw, c),
+          hMC1)
+  # the source half: cvar_resolve_bounded at the decoded values
+  hsrc = Laws.cvar_resolve_bounded(nps, ms, sh, c, i, hib, hMC)
+  # the target half: pairing rewrite + the mc_ok target bound at row i
+  hn = PR.b_le(Nat.add(i, 1n), M.nprojs_len(nps), hib)
+  htc = tcvar_pair_go(nps, ms, i, hn)
+  htgtf = Laws.mc_ok_tgt_cvar(sh, vw, c, hMC)
+  +hiC = Equal.cong(Nat, Bool, x => Nat.is_le(Nat.add(i, 1n), x),
+                    M.nprojs_len(nps), M.mprojs_len(vw),
+                    Equal.sym(Nat, M.mprojs_len(vw), M.nprojs_len(nps),
+                              Laws.mnview_len(nps, ms)))
+  +hiC2 = Equal.sym(Bool,
+                    Nat.is_le(Nat.add(i, 1n), M.nprojs_len(nps)),
+                    Nat.is_le(Nat.add(i, 1n), M.mprojs_len(vw)), hiC)
+  +hiView = Equal.trans(Bool,
+                        Nat.is_le(Nat.add(i, 1n), M.mprojs_len(vw)),
+                        Nat.is_le(Nat.add(i, 1n), M.nprojs_len(nps)),
+                        True{}, hiC2, hib)
+  hbound = Laws.mc_tgt_nth(sh, vw, i,
+                           PR.b_le(Nat.add(i, 1n), M.mprojs_len(vw), hiView), htgtf)
+  hsA = Equal.sym(Nat, M.mproj_tcvar(v),
+                  M.find_name(M.nth_snames(ms, M.mproj_tgt(v)), M.nproj_tname(np)), htc)
+  htgt = Equal.trans(Bool,
+    Nat.is_lt(M.find_name(M.nth_snames(ms, M.mproj_tgt(v)), M.nproj_tname(np)),
+              R.nats_nth(sh, M.mproj_tgt(v))),
+    Nat.is_lt(M.mproj_tcvar(v), R.nats_nth(sh, M.mproj_tgt(v))),
+    True{},
+    Equal.cong(Nat, Bool, x => Nat.is_lt(x, R.nats_nth(sh, M.mproj_tgt(v))),
+               M.find_name(M.nth_snames(ms, M.mproj_tgt(v)), M.nproj_tname(np)),
+               M.mproj_tcvar(v), hsA),
+    hbound)
+  Equal.trans(Bool & Bool,
+    (Nat.is_lt(M.find_name(M.nth_snames(ms, M.mproj_src(v)), M.nproj_sname(np)),
+               R.nats_nth(sh, M.mproj_src(v))),
+     Nat.is_lt(M.find_name(M.nth_snames(ms, M.mproj_tgt(v)), M.nproj_tname(np)),
+               R.nats_nth(sh, M.mproj_tgt(v)))),
+    (True{},
+     Nat.is_lt(M.find_name(M.nth_snames(ms, M.mproj_tgt(v)), M.nproj_tname(np)),
+               R.nats_nth(sh, M.mproj_tgt(v)))),
+    (True{}, True{}),
+    Equal.cong(Bool, Bool & Bool,
+               x => (x,
+                     Nat.is_lt(M.find_name(M.nth_snames(ms, M.mproj_tgt(v)),
+                                           M.nproj_tname(np)),
+                               R.nats_nth(sh, M.mproj_tgt(v)))),
+               Nat.is_lt(M.find_name(M.nth_snames(ms, M.mproj_src(v)), M.nproj_sname(np)),
+                         R.nats_nth(sh, M.mproj_src(v))),
+               True{}, hsrc),
+    Equal.cong(Bool, Bool & Bool,
+               y => (True{}, y),
+               Nat.is_lt(M.find_name(M.nth_snames(ms, M.mproj_tgt(v)), M.nproj_tname(np)),
+                         R.nats_nth(sh, M.mproj_tgt(v))),
+               True{}, htgt))
+
+# json_named_contract: mc_contract's assembly at the DECODED triple.  The
+# three mc_ok conjuncts come off the validator hypothesis (the length
+# conjuncts peel off first -- the ingress gates on the layer); the cvar
+# halves are the per-index mc bounds at the decoded view (the index
+# transported from the named-projection count through mnview_len by the
+# Bool roundtrip, the mc_contract pattern); the routing half is the
+# PR.routing_contract_at bridge at the decoded config, its index
+# witness transported from the named-projection count through
+# jn_zip_len (the assembly has one named projection per plain
+# projection).  Three cong steps under Equal.trans, one per component.
+def Laws.json_named_contract(s, t, i, h, hib):
+  +d = J.json_named_decode(s)
+  +nps = J.jn_nprojs(d)
+  +ms = J.jn_snames(d)
+  +sh = J.jn_shapes(d)
+  +vw = J.jn_view(d)
+  +v = M.nth_mproj(vw, i)
+  +c = J.jn_cfg(d)
+  hMC2 = PR.and_elim_r_go(
+           J.jn_valid(d),
+           Bool.and(Nat.is_eq(J.names_len(J.jn_svars(d)), R.projs_len(R.cfg_projs(c))),
+                    Bool.and(Nat.is_eq(J.names_len(J.jn_tcvars(d)),
+                                       R.projs_len(R.cfg_projs(c))),
+                             M.mc_ok(sh, vw, c))),
+           h)
+  hMC1 = PR.and_elim_r_go(
+           Nat.is_eq(J.names_len(J.jn_svars(d)), R.projs_len(R.cfg_projs(c))),
+           Bool.and(Nat.is_eq(J.names_len(J.jn_tcvars(d)), R.projs_len(R.cfg_projs(c))),
+                    M.mc_ok(sh, vw, c)),
+           hMC2)
+  +hMC = PR.and_elim_r_go(
+          Nat.is_eq(J.names_len(J.jn_tcvars(d)), R.projs_len(R.cfg_projs(c))),
+          M.mc_ok(sh, vw, c),
+          hMC1)
+  hbase = Laws.mc_ok_base(sh, vw, c, hMC)
+  hsrcf = Laws.mc_ok_src_cvar(sh, vw, c, hMC)
+  htgtf = Laws.mc_ok_tgt_cvar(sh, vw, c, hMC)
+  # index transport, named-projection count -> view length (mnview_len)
+  +hiC = Equal.cong(Nat, Bool, x => Nat.is_le(Nat.add(i, 1n), x),
+                    M.nprojs_len(nps), M.mprojs_len(vw),
+                    Equal.sym(Nat, M.mprojs_len(vw), M.nprojs_len(nps),
+                              Laws.mnview_len(nps, ms)))
+  +hiC2 = Equal.sym(Bool,
+                    Nat.is_le(Nat.add(i, 1n), M.nprojs_len(nps)),
+                    Nat.is_le(Nat.add(i, 1n), M.mprojs_len(vw)), hiC)
+  +hiView = Equal.trans(Bool,
+                        Nat.is_le(Nat.add(i, 1n), M.mprojs_len(vw)),
+                        Nat.is_le(Nat.add(i, 1n), M.nprojs_len(nps)),
+                        True{}, hiC2, hib)
+  # index transport, named-projection count -> plain-projection count
+  # (jn_zip_len: the assembly has one NProj per projection)
+  +ez = Laws.jn_zip_len(J.jn_projs(d), J.jn_svars(d), J.jn_tcvars(d))
+  +hiPf = Equal.cong(Nat, Bool, x => Nat.is_le(Nat.add(i, 1n), x),
+                     M.nprojs_len(nps), R.projs_len(R.cfg_projs(c)), ez)
+  +hiP2 = Equal.sym(Bool,
+                    Nat.is_le(Nat.add(i, 1n), M.nprojs_len(nps)),
+                    Nat.is_le(Nat.add(i, 1n), R.projs_len(R.cfg_projs(c))), hiPf)
+  +hiP = Equal.trans(Bool,
+                     Nat.is_le(Nat.add(i, 1n), R.projs_len(R.cfg_projs(c))),
+                     Nat.is_le(Nat.add(i, 1n), M.nprojs_len(nps)),
+                     True{}, hiP2, hib)
+  hsrc = Laws.mc_src_nth(sh, vw, i,
+                         PR.b_le(Nat.add(i, 1n), M.mprojs_len(vw), hiView), hsrcf)
+  htgt = Laws.mc_tgt_nth(sh, vw, i,
+                         PR.b_le(Nat.add(i, 1n), M.mprojs_len(vw), hiView), htgtf)
+  hroute = PR.routing_contract_at(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c),
+                                  t, i, hbase, {==}, {==},
+                                  PR.b_le(Nat.add(i, 1n), R.projs_len(R.cfg_projs(c)), hiP))
+  Equal.trans(Bool & (Bool & Bool),
+    (M.mproj_src_ok(sh, v),
+     M.mproj_tgt_ok(sh, v),
+     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), t, i)),
+    (True{},
+     M.mproj_tgt_ok(sh, v),
+     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), t, i)),
+    (True{}, True{}, True{}),
+    Equal.cong(Bool, Bool & (Bool & Bool),
+               x => (x,
+                     M.mproj_tgt_ok(sh, v),
+                     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)),
+                                      R.cfg_projs(c), t, i)),
+               M.mproj_src_ok(sh, v), True{}, hsrc),
+    Equal.trans(Bool & (Bool & Bool),
+      (True{},
+       M.mproj_tgt_ok(sh, v),
+       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), t, i)),
+      (True{}, True{},
+       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), t, i)),
+      (True{}, True{}, True{}),
+      Equal.cong(Bool, Bool & (Bool & Bool),
+                 y => (True{}, y,
+                       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)),
+                                        R.cfg_projs(c), t, i)),
+                 M.mproj_tgt_ok(sh, v), True{}, htgt),
+      Equal.cong(Bool, Bool & (Bool & Bool),
+                 z => (True{}, True{}, z),
+                 S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)),
+                                  R.cfg_projs(c), t, i),
+                 True{}, hroute)))

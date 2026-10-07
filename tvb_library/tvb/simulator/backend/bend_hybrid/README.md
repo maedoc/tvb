@@ -50,10 +50,11 @@ structures are, what the laws say, and how to check them.
 > proved about values, at what cost.
 
 Status: **175 laws** in `LAWS_router.bend`, **73** in `LAWS_sweep.bend`
-(parameter, connectome, seed and output-un-routing sweeps), **29** in
+(parameter, connectome, seed and output-un-routing sweeps), **34** in
 `LAWS_mconfig.bend` (heterogeneous models: cvar bounds, schemes,
-name-resolution), **13** in `LAWS_mons.bend` (monitoring variety), **5**
-in `LAWS_json.bend`, **13** model-level in `LAWS.bend` — 308 total,
+name-resolution, the named-config JSON ingress), **13** in
+`LAWS_mons.bend` (monitoring variety), **5**
+in `LAWS_json.bend`, **13** model-level in `LAWS.bend` — 313 total,
 every one kernel-verified
 (`bend PROOF_router.bend --verdict`), with 17 negative controls that the
 checker must *reject*. Everything is quantified: the JSON ingress decodes

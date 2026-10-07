@@ -25,6 +25,7 @@
 import Base
 import ./router.bend as R
 import ./sweep.bend as S
+import ./mconfig.bend as M
 
 # --------------------------------------------------------------------------
 # char classification (runtime only -- U32 primitives do not reduce on
@@ -587,3 +588,307 @@ def slot_of(+name: String) -> Nat:
 # a past-the-end index is an unknown name and lands on the junk slot)
 def sw_slot(names: List<&2, String>, k: Nat) -> Nat:
   slot_of(S.str_nth(names, k))
+
+# --------------------------------------------------------------------------
+# the NAMED-CONFIG ingress: the heterogeneous config as JSON
+# --------------------------------------------------------------------------
+# Schema (the config-side ingress composing the name-resolution layer --
+# mconfig.bend's P4 family -- with the total decode; PARALLEL TOP-LEVEL
+# arrays, no mixed-type rows):
+#   {"lanes":[k0,k1,...],
+#    "projs":[[src,tgt,d,win,tc],...],
+#    "horizon":h,
+#    "svar_names":[["y0","y1",..],["xi",..]],  one NAME LIST per lane/model
+#    "proj_svars":["y1",..],                   one SOURCE cvar name per projection
+#    "proj_tcvars":["xi",..]}                  one TARGET cvar name per projection
+# The plain triple (lanes/projs/horizon) rides exactly as in the config
+# schema above; the named layer is three more keys, so the named JSON is a
+# SUPERSET of the config JSON and json_good accepts it unchanged.  The
+# NAMED projections are ASSEMBLED from the decode (jn_nprojs: projection
+# i's src/tgt paired with the i-th names -- the col_row idiom at the named
+# level; a short name list reads "" past its end, and find_name's
+# junk-index convention sends the empty name to the junk index, so the
+# validator rejects it -- never silently defaults).  Keys in ANY order;
+# whitespace-tolerant; the same strict JSON subset as above.  The decode
+# is TOTAL (any string yields a JN; any unexpected token STOPS the scan
+# and answers what was parsed so far -- garbage yields the empty named
+# config: every list empty, horizon 0), which is what lets
+# json_named_contract (LAWS_mconfig.bend) quantify over ALL strings.
+
+# a decoded named config: the plain triple plus the name-resolution data
+type JN is Data:
+  JN{lanes: List<&2, Nat>, projs: List<&2, R.Proj>, horizon: Nat,
+     snames: List<&2, List<&2, String>>, svars: List<&2, String>,
+     tcvars: List<&2, String>, seen: Nat, valid: Bool}
+
+def jn_lanes(+jn: JN) -> List<&2, Nat>:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      lanes
+
+def jn_projs(+jn: JN) -> List<&2, R.Proj>:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      projs
+
+def jn_horizon(+jn: JN) -> Nat:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      horizon
+
+def jn_snames(+jn: JN) -> List<&2, List<&2, String>>:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      snames
+
+def jn_svars(+jn: JN) -> List<&2, String>:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      svars
+
+def jn_tcvars(+jn: JN) -> List<&2, String>:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      tcvars
+
+def jn_valid(+jn: JN) -> Bool:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      valid
+
+def jn_set_lanes(+jn: JN, vals: List<&2, Nat>) -> JN:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      JN{vals, projs, horizon, snames, svars, tcvars, 1n+seen, valid}
+
+def jn_set_projs(+jn: JN, vals: List<&2, R.Proj>) -> JN:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      JN{lanes, vals, horizon, snames, svars, tcvars, 1n+seen, valid}
+
+def jn_set_horizon(+jn: JN, val: Nat) -> JN:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      JN{lanes, projs, val, snames, svars, tcvars, 1n+seen, valid}
+
+def jn_set_snames(+jn: JN, vals: List<&2, List<&2, String>>) -> JN:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      JN{lanes, projs, horizon, vals, svars, tcvars, 1n+seen, valid}
+
+def jn_set_svars(+jn: JN, vals: List<&2, String>) -> JN:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      JN{lanes, projs, horizon, snames, vals, tcvars, 1n+seen, valid}
+
+def jn_set_tcvars(+jn: JN, vals: List<&2, String>) -> JN:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      JN{lanes, projs, horizon, snames, svars, vals, 1n+seen, valid}
+
+def jn_bad(+jn: JN) -> JN:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      JN{lanes, projs, horizon, snames, svars, tcvars, seen, False{}}
+
+def jn_mark(b: Bool, +jn: JN) -> JN:
+  match b:
+    case True{}:
+      jn
+    case _:
+      jn_bad(jn)
+
+# a closed object is valid iff nothing junk'd AND all six keys were seen
+# (the jc_final shape at the six-key width)
+def jn_done(b: Bool, +lanes: List<&2, Nat>, +projs: List<&2, R.Proj>, +horizon: Nat,
+            +snames: List<&2, List<&2, String>>, +svars: List<&2, String>,
+            +tcvars: List<&2, String>) -> JN:
+  match b:
+    case True{}:
+      JN{lanes, projs, horizon, snames, svars, tcvars, 6n, True{}}
+    case _:
+      JN{lanes, projs, horizon, snames, svars, tcvars, 0n, False{}}
+
+def jn_final(+jn: JN) -> JN:
+  match jn:
+    case JN{lanes, projs, horizon, snames, svars, tcvars, seen, valid}:
+      jn_done(Bool.and(valid, Nat.is_eq(seen, 6n)), lanes, projs, horizon,
+              snames, svars, tcvars)
+
+# end of input (or '}'): only mode 0 (object level) is a clean end
+def jn_end(m: Nat, +jn: JN) -> JN:
+  match m:
+    case 0n:
+      jn_final(jn)
+    case _:
+      jn_bad(jn)
+
+# reverse helpers: the string-list one is strs_rev (above); the
+# list-of-string-lists one mirrors it for svar_names' outer array
+def slists_rev(xs: List<&2, List<&2, String>>, acc: List<&2, List<&2, String>>)
+    -> List<&2, List<&2, String>>:
+  match xs:
+    case Nil{}:
+      acc
+    case h <> t:
+      slists_rev(t, h <> acc)
+
+# "lanes" -> 1, "projs" -> 2, "svar_names" -> 4, "proj_svars" -> 6,
+# "proj_tcvars" -> 7, anything else -> 9 (junk) -- the key_arr_mode shape
+def jn_key_mode(+key: String) -> Nat:
+  Bool.pick(Nat, String.eq(key, "lanes"), 1n,
+  Bool.pick(Nat, String.eq(key, "projs"), 2n,
+  Bool.pick(Nat, String.eq(key, "svar_names"), 4n,
+  Bool.pick(Nat, String.eq(key, "proj_svars"), 6n,
+  Bool.pick(Nat, String.eq(key, "proj_tcvars"), 7n, 9n)))))
+
+# a number is a value only for "horizon" (the jc_num_field shape)
+def jn_num_field(+key: String, val: Nat, +jn: JN) -> JN:
+  Bool.pick(JN, String.eq(key, "horizon"), jn_set_horizon(jn, val), jn_bad(jn))
+
+# --------------------------------------------------------------------------
+# the named-config object parser: the obj_go / sw_go shape -- ONE
+# self-recursive state machine over (tokens, mode), pure helpers that
+# return DATA and never call back.  Modes: 0 object level, 1 inside the
+# lanes array, 2 inside the projs array, 3 inside one projection tuple,
+# 4 inside svar_names' outer array, 5 inside one lane's name list,
+# 6 inside proj_svars, 7 inside proj_tcvars, 9 junk.
+# --------------------------------------------------------------------------
+def nobj_go(ts: List<&2, Tok>, m: Nat, key: String, +tacc: List<&2, Nat>,
+            +lacc: List<&2, Nat>, +pacc: List<&2, R.Proj>,
+            +nacc: List<&2, String>, +snacc: List<&2, List<&2, String>>,
+            +vsacc: List<&2, String>, +vtacc: List<&2, String>, +jn: JN) -> JN:
+  match ts m:
+    case Nil{} _:
+      jn_end(m, jn)
+    case TBraceO{} <> t 0n:
+      nobj_go(t, 0n, key, tacc, lacc, pacc, nacc, snacc, vsacc, vtacc, jn)
+    case TComma{} <> t 0n:
+      nobj_go(t, 0n, key, tacc, lacc, pacc, nacc, snacc, vsacc, vtacc, jn)
+    case TBraceC{} <> t 0n:
+      jn_end(0n, jn)
+    case TStr{+k2} <> TColon{} <> TBrackO{} <> t 0n:
+      nobj_go(t, jn_key_mode(k2), k2, Nil{}, lacc, pacc, Nil{}, snacc, vsacc, vtacc, jn)
+    case TStr{+k2} <> TColon{} <> TNum{val} <> t 0n:
+      nobj_go(t, 0n, k2, Nil{}, lacc, pacc, nacc, snacc, vsacc, vtacc,
+              jn_num_field(k2, val, jn))
+    case TNum{val} <> t 1n:
+      nobj_go(t, 1n, key, tacc, val <> lacc, pacc, nacc, snacc, vsacc, vtacc, jn)
+    case TComma{} <> t 1n:
+      nobj_go(t, 1n, key, tacc, lacc, pacc, nacc, snacc, vsacc, vtacc, jn)
+    case TBrackC{} <> t 1n:
+      nobj_go(t, 0n, key, tacc, Nil{}, pacc, nacc, snacc, vsacc, vtacc,
+              jn_set_lanes(jn, nats_rev(lacc, Nil{})))
+    case TBrackO{} <> t 2n:
+      nobj_go(t, 3n, key, Nil{}, lacc, pacc, nacc, snacc, vsacc, vtacc, jn)
+    case TComma{} <> t 2n:
+      nobj_go(t, 2n, key, tacc, lacc, pacc, nacc, snacc, vsacc, vtacc, jn)
+    case TBrackC{} <> t 2n:
+      nobj_go(t, 0n, key, tacc, lacc, Nil{}, nacc, snacc, vsacc, vtacc,
+              jn_set_projs(jn, projs_rev(pacc, Nil{})))
+    case TNum{val} <> t 3n:
+      nobj_go(t, 3n, key, val <> tacc, lacc, pacc, nacc, snacc, vsacc, vtacc, jn)
+    case TComma{} <> t 3n:
+      nobj_go(t, 3n, key, tacc, lacc, pacc, nacc, snacc, vsacc, vtacc, jn)
+    case TBrackC{} <> t 3n:
+      nobj_go(t, 2n, key, Nil{}, lacc, proj_push(tacc, pacc), nacc, snacc, vsacc, vtacc,
+              jn_mark(proj_ok(tacc), jn))
+    case TBrackO{} <> t 4n:
+      nobj_go(t, 5n, key, tacc, lacc, pacc, Nil{}, snacc, vsacc, vtacc, jn)
+    case TComma{} <> t 4n:
+      nobj_go(t, 4n, key, tacc, lacc, pacc, nacc, snacc, vsacc, vtacc, jn)
+    case TBrackC{} <> t 4n:
+      nobj_go(t, 0n, key, tacc, lacc, pacc, nacc, Nil{}, vsacc, vtacc,
+              jn_set_snames(jn, slists_rev(snacc, Nil{})))
+    case TStr{val} <> t 5n:
+      nobj_go(t, 5n, key, tacc, lacc, pacc, val <> nacc, snacc, vsacc, vtacc, jn)
+    case TComma{} <> t 5n:
+      nobj_go(t, 5n, key, tacc, lacc, pacc, nacc, snacc, vsacc, vtacc, jn)
+    case TBrackC{} <> t 5n:
+      nobj_go(t, 4n, key, tacc, lacc, pacc, Nil{}, strs_rev(nacc, Nil{}) <> snacc,
+              vsacc, vtacc, jn)
+    case TStr{val} <> t 6n:
+      nobj_go(t, 6n, key, tacc, lacc, pacc, nacc, snacc, val <> vsacc, vtacc, jn)
+    case TComma{} <> t 6n:
+      nobj_go(t, 6n, key, tacc, lacc, pacc, nacc, snacc, vsacc, vtacc, jn)
+    case TBrackC{} <> t 6n:
+      nobj_go(t, 0n, key, tacc, lacc, pacc, nacc, snacc, Nil{}, vtacc,
+              jn_set_svars(jn, strs_rev(vsacc, Nil{})))
+    case TStr{val} <> t 7n:
+      nobj_go(t, 7n, key, tacc, lacc, pacc, nacc, snacc, vsacc, val <> vtacc, jn)
+    case TComma{} <> t 7n:
+      nobj_go(t, 7n, key, tacc, lacc, pacc, nacc, snacc, vsacc, vtacc, jn)
+    case TBrackC{} <> t 7n:
+      nobj_go(t, 0n, key, tacc, lacc, pacc, nacc, snacc, vsacc, Nil{},
+              jn_set_tcvars(jn, strs_rev(vtacc, Nil{})))
+    case _ _:
+      jn_bad(jn)
+
+# TOTAL decode: any string at all yields a JN (junk -> the empty named
+# config: every list empty, horizon 0, invalid).  This totality is what
+# lets json_named_contract quantify over ALL strings.
+def json_named_decode(s: String) -> JN:
+  nobj_go(tokens(s), 0n, SNil{}, Nil{}, Nil{}, Nil{}, Nil{}, Nil{}, Nil{}, Nil{},
+          JN{Nil{}, Nil{}, 0n, Nil{}, Nil{}, Nil{}, 0n, True{}})
+
+# --------------------------------------------------------------------------
+# the named decode's ASSEMBLY and VALIDATOR: the ingress composes the
+# name-resolution layer, it never re-states it
+# --------------------------------------------------------------------------
+
+# the decoded plain config (the json_decode analog on the JN record)
+def jn_cfg(+jn: JN) -> R.Config:
+  R.Config{jn_lanes(jn), jn_projs(jn), jn_horizon(jn)}
+
+# the NAMED projections, ASSEMBLED: named projection i is projection i's
+# src/tgt paired with proj_svars[i] / proj_tcvars[i] (the col_row idiom at
+# the named level).  Recursion on the PROJECTIONS only; the name lists
+# ride through str_nth/str_tail ("" and Nil past the end, the default-read
+# convention -- the junk-name path the validator rejects below).
+def zip_nprojs(ps: List<&2, R.Proj>, +svs: List<&2, String>, +tvs: List<&2, String>)
+    -> List<&2, M.NProj>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case +p <> t:
+      M.NProj{R.proj_src(p), R.proj_tgt(p), S.str_nth(svs, 0n), S.str_nth(tvs, 0n)}
+        <> zip_nprojs(t, S.str_tail(svs), S.str_tail(tvs))
+
+def jn_nprojs(+jn: JN) -> List<&2, M.NProj>:
+  zip_nprojs(jn_projs(jn), jn_svars(jn), jn_tcvars(jn))
+
+# the model shapes: the per-lane name lists' LENGTHS (the state-variable
+# counts -- the plane the mc_ok bounds check guards, the P4 layer's
+# NAMED_SHAPES convention)
+def snames_shapes(ms: List<&2, List<&2, String>>) -> List<&2, Nat>:
+  match ms:
+    case Nil{}:
+      Nil{}
+    case h <> t:
+      M.snames_len(h) <> snames_shapes(t)
+
+def jn_shapes(+jn: JN) -> List<&2, Nat>:
+  snames_shapes(jn_snames(jn))
+
+# the RESOLVED view: mnview of the assembled named projections against the
+# decoded name lists (each cvar NAME resolved per model by M.find_name)
+def jn_view(+jn: JN) -> List<&2, M.MProj>:
+  M.mnview(jn_nprojs(jn), jn_snames(jn))
+
+# THE NAMED-INGRESS VALIDATOR (the json_good analog at the heterogeneous
+# level): (0) the parse gate -- all six keys seen, nothing junk'd (the
+# j_valid half of json_good; without it the EMPTY decode would validate
+# vacuously and garbage would run); (a)/(b) one cvar name per projection
+# on each side -- a short list reads "" past its end, "" is unknown in
+# every model, and find_name's junk index (= the name list's length)
+# fails the mc_ok bounds, but the length conjuncts reject the mismatch up
+# front; (c) the name-resolution layer's own validator -- mc_ok at the
+# DECODED shapes, the RESOLVED view and the decoded plain config.  The
+# ingress GATES on the layer, never re-states a rule.
+def jn_good(+jn: JN) -> Bool:
+  Bool.and(jn_valid(jn),
+  Bool.and(Nat.is_eq(names_len(jn_svars(jn)),
+                     R.projs_len(R.cfg_projs(jn_cfg(jn)))),
+  Bool.and(Nat.is_eq(names_len(jn_tcvars(jn)),
+                     R.projs_len(R.cfg_projs(jn_cfg(jn)))),
+           M.mc_ok(jn_shapes(jn), jn_view(jn), jn_cfg(jn)))))

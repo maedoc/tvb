@@ -25,6 +25,7 @@ import Base
 import ./mconfig.bend as M
 import ./router.bend as R
 import ./sweep.bend as S
+import ./json_ingest.bend as J
 
 # --------------------------------------------------------------------------
 # the instances: the demo's shape, pinned
@@ -433,3 +434,105 @@ law cvar_resolve_cross:
 law cvar_ok_good:
   {M.mc_ok(NAMED_SHAPES(), M.mnview(NPROJ_GOOD() <> Nil{}, MODELS()),
            GOOD_C()) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# P4b -- the NAMED-CONFIG JSON INGRESS (the config-side ingress composing
+# the name-resolution layer): the schema is PARALLEL TOP-LEVEL arrays --
+# the plain triple (lanes/projs/horizon) exactly as the config schema,
+# plus svar_names (one NAME LIST per lane/model), proj_svars / proj_tcvars
+# (one cvar NAME per projection).  The named projections are ASSEMBLED
+# from the decode (J.jn_nprojs: projection i's src/tgt paired with the
+# i-th names), the shapes are the name lists' lengths (J.jn_shapes), and
+# the validator J.jn_good is mc_ok at the decoded triple -- the ingress
+# GATES on the name-resolution layer, never re-states it.  The decode is
+# TOTAL (garbage -> the empty named config), so the capstone quantifies
+# over ALL strings, the json_read_fresh / json_sweep_contract shape.
+# --------------------------------------------------------------------------
+
+# the transcription pin (the csr_row_good / json_decode_instance
+# convention): the demo's heterogeneous network as a literal named-config
+# JSON decodes to exactly the pinned values -- the demo's name lists
+# (MODELS), the demo's named projection (NPROJ_GOOD: cortex -> thalamus,
+# 'y1' / 'xi'), the GOOD_C config, all six keys seen, parse-valid.
+law json_named_instance:
+  {J.json_named_decode("{\"lanes\":[1,2],\"projs\":[[0,1,1,0,0]],\"horizon\":4,\"svar_names\":[[\"y0\",\"y1\",\"y2\",\"y3\",\"y4\",\"y5\"],[\"xi\",\"eta\",\"alpha\",\"beta\"]],\"proj_svars\":[\"y1\"],\"proj_tcvars\":[\"xi\"]}")
+     == J.JN{1n <> 2n <> Nil{}, R.Proj{0n, 1n, 1n, 0n, 0n} <> Nil{}, 4n,
+             MODELS(), "y1" <> Nil{}, "xi" <> Nil{}, 6n, True{}}
+   : J.JN}
+
+# garbage decodes to the empty named config -- the total-decode pin (the
+# json_decode_garbage / json_sweep_garbage convention): every list empty,
+# horizon 0, nothing seen, not parse-valid.
+law json_named_garbage:
+  {J.json_named_decode("zz not json")
+     == J.JN{Nil{}, Nil{}, 0n, Nil{}, Nil{}, Nil{}, 0n, False{}} : J.JN}
+
+# the ASSEMBLY's length law: the assembled named-projection list has one
+# NProj per PLAIN projection -- the zip consumes the projections, so
+# shortening the name lists cannot lose a projection (a short list reads
+# "" past its end instead, the junk-name path the validator rejects).
+law jn_zip_len:
+  for +ps: List<&2, R.Proj>
+  for +svs: List<&2, String>
+  for +tvs: List<&2, String>
+  {M.nprojs_len(J.zip_nprojs(ps, svs, tvs)) == R.projs_len(ps) : Nat}
+
+# THE RESOLVE LAW: the decoded named projection's cvars resolve THROUGH
+# find_name to in-range indices -- cvar_resolve_bounded composed with the
+# decode.  For every string s whose decoded named config VALIDATES
+# (J.jn_good: the name-per-projection lengths, then mc_ok at the decoded
+# shapes/view/config) and every in-bounds named-projection index i, BOTH
+# resolved indices land inside their models' name-list lengths -- source
+# AND target (the bounded composition stated per side; the junk-index
+# convention is what makes it honest: an unknown name's junk index fails
+# the bound, so it cannot sneak through).
+law json_named_resolve:
+  for +s: String
+  for +i: Nat
+  for +hib: {Nat.is_le(Nat.add(i, 1n),
+                       M.nprojs_len(J.jn_nprojs(J.json_named_decode(s)))) == True{} : Bool}
+  for +h: {J.jn_good(J.json_named_decode(s)) == True{} : Bool}
+  {(Nat.is_lt(M.find_name(
+                M.nth_snames(J.jn_snames(J.json_named_decode(s)),
+                             M.mproj_src(M.nth_mproj(J.jn_view(J.json_named_decode(s)), i))),
+                M.nproj_sname(M.nth_nproj(J.jn_nprojs(J.json_named_decode(s)), i))),
+              R.nats_nth(J.jn_shapes(J.json_named_decode(s)),
+                         M.mproj_src(M.nth_mproj(J.jn_view(J.json_named_decode(s)), i)))),
+    Nat.is_lt(M.find_name(
+                M.nth_snames(J.jn_snames(J.json_named_decode(s)),
+                             M.mproj_tgt(M.nth_mproj(J.jn_view(J.json_named_decode(s)), i))),
+                M.nproj_tname(M.nth_nproj(J.jn_nprojs(J.json_named_decode(s)), i))),
+              R.nats_nth(J.jn_shapes(J.json_named_decode(s)),
+                         M.mproj_tgt(M.nth_mproj(J.jn_view(J.json_named_decode(s)), i)))))
+   == (True{}, True{}) : Bool & Bool}
+
+# THE NAMED-CONFIG CONTRACT -- the ingress capstone (the
+# routing_contract_at bridge pattern at the decoded config, the
+# json_read_fresh analog at the heterogeneous level): for EVERY string s
+# whose decoded named config validates, and every in-bounds named
+# projection i, at ANY tick t:
+#   (a)/(b) the resolved view row i's cvars are in range of their models'
+#       name-list lengths (the per-index mc bounds at the DECODED view);
+#   (c) the router's full routing contract holds at the decoded config's
+#       projection i -- fresh, in-window, ordered (PR.routing_contract_at
+#       discharges it at jn_cfg, exactly as mc_contract's third conjunct).
+# The decoded triple rides definitionally: shapes = jn_shapes (the name
+# lists' lengths), view = jn_view (mnview of the assembled named
+# projections), config = jn_cfg.  Nothing escapes a validated runtime
+# input: the name resolution lands in range AND the routing is clean.
+law json_named_contract:
+  for +s: String
+  for +t: Nat
+  for +i: Nat
+  for +h: {J.jn_good(J.json_named_decode(s)) == True{} : Bool}
+  for +hib: {Nat.is_le(Nat.add(i, 1n),
+                       M.nprojs_len(J.jn_nprojs(J.json_named_decode(s)))) == True{} : Bool}
+  {(M.mproj_src_ok(J.jn_shapes(J.json_named_decode(s)),
+                   M.nth_mproj(J.jn_view(J.json_named_decode(s)), i)),
+    M.mproj_tgt_ok(J.jn_shapes(J.json_named_decode(s)),
+                   M.nth_mproj(J.jn_view(J.json_named_decode(s)), i)),
+    S.routing_bundle(J.jn_cfg(J.json_named_decode(s)),
+                     R.init_lanes(R.cfg_lanes(J.jn_cfg(J.json_named_decode(s)))),
+                     R.cfg_projs(J.jn_cfg(J.json_named_decode(s))), t, i))
+   == (True{}, True{}, True{})
+   : Bool & (Bool & Bool)}

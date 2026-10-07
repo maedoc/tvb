@@ -109,23 +109,71 @@ def sweep_line(+json: String) -> String:
     ++ " cols=" ++ Nat.show(S.rows_len(J.sw_cols(sw)))
     ++ " ns=" ++ Nat.show(S.cols_ns(J.sw_cols(sw)))
 
+# the NAMED-CONFIG decode line: what the total named-config ingress makes
+# of the same argv string -- lanes / per-lane name lists / projections /
+# per-projection cvar-name counts, and the heterogeneous validator's
+# verdict (garbage decodes to the empty named config: all zeros, ok=false;
+# proved total by json_named_garbage).  Printed BEFORE the gate, next to
+# the sweep line, so a rejected input's decode is still visible.
+def count_nats(xs: List<&2, Nat>) -> Nat:
+  match xs:
+    case Nil{}:
+      0n
+    case h <> t:
+      1n+count_nats(t)
+
+def count_slists(xs: List<&2, List<&2, String>>) -> Nat:
+  match xs:
+    case Nil{}:
+      0n
+    case h <> t:
+      1n+count_slists(t)
+
+def named_line(+json: String) -> String:
+  +jn = J.json_named_decode(json)
+  "named: lanes=" ++ Nat.show(count_nats(J.jn_lanes(jn)))
+    ++ " models=" ++ Nat.show(count_slists(J.jn_snames(jn)))
+    ++ " projs=" ++ Nat.show(count_projs(J.jn_projs(jn)))
+    ++ " svars=" ++ Nat.show(J.names_len(J.jn_svars(jn)))
+    ++ " tcvars=" ++ Nat.show(J.names_len(J.jn_tcvars(jn)))
+    ++ " ok=" ++ Bool.show(J.jn_good(jn))
+
 def report(+cfg: R.Config, +json: String) -> IO(Unit):
   do IO<Unit>:
     IO.print(sweep_line(json))
+    IO.print(named_line(json))
     IO.print("ok=PASS lanes=" ++ show_nats(R.cfg_lanes(cfg)) ++ " projs=" ++ Nat.show(count_projs(R.cfg_projs(cfg))) ++ " horizon=" ++ Nat.show(R.cfg_horizon(cfg)))
     tick_loop(4n, R.tick(R.init_lanes(R.cfg_lanes(cfg)), R.cfg_projs(cfg)), R.cfg_projs(cfg))
 
-def show_gate(g: Bool, +json: String) -> IO(Unit):
+# the NAMED gate: the named-config validator's own verdict -- the named
+# decode is parse-valid AND jn_good (the name-per-projection lengths and
+# the heterogeneous layer's mc_ok at the decoded shapes/view/config), so
+# the binary runs the DECODED config (jn_cfg) under the proved contract
+# (json_named_contract, LAWS_mconfig.bend).
+def named_gate(g: Bool, +jn: J.JN, +json: String) -> IO(Unit):
+  match g:
+    case True{}:
+      report(J.jn_cfg(jn), json)
+    case _:
+      do IO<Unit>:
+        IO.print(sweep_line(json))
+        IO.print(named_line(json))
+        IO.print("REJECTED: bad JSON or the named validator == False")
+
+# the ingress order: the PLAIN gate first, the named gate only on refusal.
+# The named keys junk the plain parse and the plain keys are a subset of
+# the named schema, so the two gates accept disjoint documents -- the
+# plain path keeps every pinned output, the named path adds the
+# heterogeneous ones.
+def show_gate(g: Bool, +jn: J.JN, +json: String) -> IO(Unit):
   match g:
     case True{}:
       report(J.json_decode(json), json)
     case _:
-      do IO<Unit>:
-        IO.print(sweep_line(json))
-        IO.print("REJECTED: bad JSON or R.ok == False")
+      named_gate(J.jn_good(jn), jn, json)
 
 def run_json(+json: String) -> IO(Unit):
-  show_gate(J.json_good(json), json)
+  show_gate(J.json_good(json), J.json_named_decode(json), json)
 
 def arg_or_usage(args: List<String>) -> IO(Unit):
   match args:
