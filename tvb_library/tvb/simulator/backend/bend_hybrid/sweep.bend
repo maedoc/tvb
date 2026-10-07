@@ -744,3 +744,182 @@ def block_go(k: Nat, +series: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>
 
 def block_of(+n: Nat, +series: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
   block_go(n, series)
+
+# --------------------------------------------------------------------------
+# P6 -- the GRID (SWEEP_LAWS_DESIGN.md, gap 8): the row = grid-point
+# construction.  A grid is a CROSS PRODUCT of independent per-dimension
+# RANGES, enumerated row-major over the per-dimension lengths: dimension 0
+# is the SLOWEST-varying index and the last dimension varies fastest.
+# Each grid point is a SWEEP ROW (one value per dimension), so a grid
+# routes through the existing sweep_nth / fan machinery unchanged.
+#
+# REPRESENTATION: the grid is `List<&2, List<&2, F32>>` -- dimension j's
+# range is element j -- the SAME COLUMNS shape the JSON sweep ingress
+# decodes (sweep_names / sweep_cols, values integer-scaled): a grid over
+# the decoded columns enumerates the cross product of the supplied
+# ranges.  grid_len is the PRODUCT of the per-dimension lengths (the
+# grid's sim count); grid_ok = every dimension NONEMPTY (an empty dim
+# would sweep nothing) /\ the product fits the fixed 8-wide fan (the
+# sweep_ok width conjunct) /\ the shared config's R.ok.  The bounds guard
+# grid_point is the swept_param analog: an out-of-range index's witness
+# cannot be fabricated.
+#
+# THE MIXED-RADIX DECOMPOSITION (the flat_nth brick at grid level): the
+# i-th grid point's coordinate in dimension j is the mixed-radix digit of
+# i -- i = d_0*P_0 + d_1*P_1 + ... with P_j = grid_len(dims after j).
+# grid_dim_len / grid_len give the radices; split is the digit extractor
+# (Base Nat.divmod's countdown machine, re-worked as a Data record whose
+# recursion the proofs can match); grid_row walks the dimensions splitting
+# the current index by the TAIL product (row-major: the first dim's digit
+# is the biggest stride) and reads each dimension's value at its digit.
+# The walk is TOTAL: a past-the-end index keeps splitting (the digit then
+# reads a default 0.0), so reads stay total while the GUARD rejects.
+# --------------------------------------------------------------------------
+
+# the mixed-radix split: for B > 0 (B = 0 is total junk), split(B, i) =
+# (i div B, i mod B): the digit and the remainder of one radix.
+type Split is Data:
+  Split{d: Nat, r: Nat}
+
+def split_d(+s: Split) -> Nat:
+  match s:
+    case Split{d, r}:
+      d
+
+def split_r(+s: Split) -> Nat:
+  match s:
+    case Split{d, r}:
+      r
+
+# the countdown machine (the Base Nat.divmod.go clock, record-shaped):
+# (n, m, d, r) -- n the unconsumed index, m the co-countdown from B-1,
+# d the quotient, r the remainder.  Halt when n = 0: the answer (d, r).
+def split_go(n: Nat, m: Nat, d: Nat, r: Nat) -> Split:
+  match n m:
+    case 0n _:
+      Split{d, r}
+    case 1n+np 0n:
+      split_go(np, r, 1n+d, 0n)
+    case 1n+np 1n+mp:
+      split_go(np, mp, d, 1n+r)
+
+def split(+B: Nat, i: Nat) -> Split:
+  match B:
+    case 0n:
+      Split{0n, i}
+    case 1n+bp:
+      split_go(i, bp, 0n, 0n)
+
+# dimension j's RANGE: element j of the grid (a column of values); past
+# the end: the empty range (the sweep_row default-read convention)
+def grid_dim(gs: List<&2, List<&2, F32>>, j: Nat) -> List<&2, F32>:
+  sweep_row(gs, j)
+
+# dimension j's LENGTH -- the j-th radix of the mixed-radix decomposition
+def grid_dim_len(gs: List<&2, List<&2, F32>>, j: Nat) -> Nat:
+  sweep_len(grid_dim(gs, j))
+
+# the product of the per-dimension lengths: the grid's sim count -- the
+# mixed-radix decoding's stride base (Nat.mul's recursion on the FIRST
+# argument is the shape the length law recurses through)
+def grid_len(gs: List<&2, List<&2, F32>>) -> Nat:
+  match gs:
+    case Nil{}:
+      1n
+    case r <> t:
+      Nat.mul(sweep_len(r), grid_len(t))
+
+# the every-dimension-nonempty fold: an empty range is a REJECTED grid
+# (it would sweep nothing; split needs B > 0 to be a radix)
+def grid_nonempty(gs: List<&2, List<&2, F32>>) -> Bool:
+  match gs:
+    case Nil{}:
+      True{}
+    case r <> t:
+      Bool.and(Nat.is_ne(sweep_len(r), 0n), grid_nonempty(t))
+
+# THE GRID VALIDATOR -- the sweep_ok generalization:
+#   (a) EVERY DIMENSION NONEMPTY (the fold above);
+#   (b) the WIDTH bound: the product fits the fixed 8-wide fan (the
+#       sweep_ok conjunct; a grid whose total exceeds 8 would silently
+#       drop points, the n_sweep > 8 failure mode at the grid level);
+#   (c) the SHARED CONFIG's R.ok (one call covers the whole grid batch).
+# The row SHAPE needs no conjunct: every grid point is a row of exactly
+# one value per dimension BY CONSTRUCTION (grid_row_shape pins it).
+def grid_ok(+gs: List<&2, List<&2, F32>>, +c: R.Config) -> Bool:
+  Bool.and(grid_nonempty(gs), Bool.and(Nat.is_le(grid_len(gs), 8n), R.ok(c)))
+
+# the COORDINATE WALK: the list of the i-th grid point's coordinates,
+# one mixed-radix digit per dimension, in dimension order (the row-major
+# order: the first dim's digit is the biggest stride -- the tail product)
+def grid_coords_go(gs: List<&2, List<&2, F32>>, +i: Nat) -> List<&2, Nat>:
+  match gs:
+    case Nil{}:
+      Nil{}
+    case r <> +rest:
+      split_d(split(grid_len(rest), i)) <> grid_coords_go(rest,
+                                                          split_r(split(grid_len(rest), i)))
+
+def grid_coords(gs: List<&2, List<&2, F32>>, i: Nat) -> List<&2, Nat>:
+  grid_coords_go(gs, i)
+
+# coordinate j of grid point i: the DIRECT digit extraction -- the same
+# walk as the coords list, one digit without building the rest (the
+# index remainder rides the split; grid_coords_digit pins that this IS
+# the mixed-radix digit the list carries)
+def grid_digit_go(gs: List<&2, List<&2, F32>>, +i: Nat, j: Nat) -> Nat:
+  match gs j:
+    case Nil{} _:
+      0n
+    case r <> +rest 0n:
+      split_d(split(grid_len(rest), i))
+    case r <> +rest 1n+p:
+      grid_digit_go(rest, split_r(split(grid_len(rest), i)), p)
+
+def grid_digit(gs: List<&2, List<&2, F32>>, i: Nat, j: Nat) -> Nat:
+  grid_digit_go(gs, i, j)
+
+# the i-th grid point AS A SWEEP ROW: one value per dimension, dimension
+# j's value read at coordinate j of grid point i -- the ROW the sweep row
+# machinery routes unchanged (grid rows ARE sweep rows).  Total: a
+# past-the-end index reads whatever digit its continued split reaches
+# (the default-read convention; route through grid_point to stay in
+# bounds -- past-the-end points are REJECTED, not wrapped).
+def grid_row_go(gs: List<&2, List<&2, F32>>, +i: Nat) -> List<&2, F32>:
+  match gs:
+    case Nil{}:
+      Nil{}
+    case r <> +rest:
+      sweep_nth(r, split_d(split(grid_len(rest), i)))
+        <> grid_row_go(rest, split_r(split(grid_len(rest), i)))
+
+def grid_row(gs: List<&2, List<&2, F32>>, i: Nat) -> List<&2, F32>:
+  grid_row_go(gs, i)
+
+# the grid point read, callable ONLY for an in-bounds index -- the
+# swept_param convention: the witness lt_ok(i, grid_len(gs)) cannot be
+# fabricated for i >= total, which is the past-the-end REJECTION (an
+# out-of-range grid point is not a grid point).
+def grid_point(gs: List<&2, List<&2, F32>>, i: Nat,
+               -w: R.lt_ok(i, grid_len(gs))) -> List<&2, F32>:
+  grid_row(gs, i)
+
+# the DECODING of a coordinate vector back to an index: sum of
+# digit_j * stride_j (stride_j = grid_len of the dims after j) -- the
+# "mixed-radix injectivity" witness direction.  grid_index_inst pins the
+# round trip on literal grids (i < total: the digits decode back to i).
+def grid_index_go(gs: List<&2, List<&2, F32>>,
+                  cs: List<&2, Nat>) -> Nat:
+  match gs cs:
+    case Nil{} Nil{}:
+      0n
+    case Nil{} c0 <> t:
+      0n
+    case r <> rest Nil{}:
+      0n
+    case r <> +rest c0 <> t:
+      Nat.add(Nat.mul(c0, grid_len(rest)), grid_index_go(rest, t))
+
+def grid_index(gs: List<&2, List<&2, F32>>,
+               cs: List<&2, Nat>) -> Nat:
+  grid_index_go(gs, cs)

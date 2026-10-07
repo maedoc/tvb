@@ -917,3 +917,193 @@ law sweep_out_contract:
    (S.sweep_row(S.out_block(blocks, i), s),
     S.out_block(blocks, i))
    : List<&2, F32> & (List<&2, List<&2, F32>>)}
+
+# --------------------------------------------------------------------------
+# P6 -- the GRID (SWEEP_LAWS_DESIGN.md, gap 8): the row = grid-point
+# construction.  A grid is the CROSS PRODUCT of per-dimension ranges
+# (the COLUMNS shape: dim j's range is list j), enumerated ROW-MAJOR:
+# dimension 0 varies slowest, the last dimension fastest.  The i-th grid
+# point IS a sweep row -- one value per dim -- so grid rows route through
+# the existing sweep machinery unchanged (the capstone below).
+#
+#   (a) grid_coord / grid_coords_digit: grid point i's coordinate in
+#       dimension j IS the mixed-radix digit of i -- the coordinate is
+#       read by the SAME split walk as the row build (lockstep, so the
+#       digit of the point and the element of the row are definitionally
+#       equal), and the coordinate list carries the same digits.
+#   (b) coverage: grid_len IS the product of the lengths (grid_len_step
+#       recurses), every in-bounds index has a grid point (grid_point's
+#       lt_ok witness -- the read-side existence proof), and OUT-OF-RANGE
+#       points are REJECTED: the witness cannot be fabricated and the
+#       continued walk reads defaults (bad/bad_grid.bend, the wrapper
+#       must fail).  Mixed-radix injectivity (for i < total the digits
+#       decode back to i) is pinned at the instance level by
+#       grid_index_inst -- the kernel keeps symbolic-Nat divmod opaque,
+#       so the quantified decode law would not reduce; the walk's digit
+#       extraction is pinned by the digit laws, the arithmetic round trip
+#       by the literal pin.
+#   (c) grid_contract: the composition capstone -- a validated grid, at
+#       any in-bounds point i and any projection j of the shared config,
+#       routes the point's field j out of the point's OWN split digit
+#       (the coordinate law), lane i of the fixed 8-wide fan (the width
+#       witness from the validator), and the shared config's routing
+#       contract -- the sweep_contract bundle at the grid's sim count.
+#   (d) grid_row_shape / grid_row_inst_*: the enumeration order IS
+#       row-major by construction (the first dim's digit is the biggest
+#       stride -- the tail product), and the literal 2x2 grid pins all
+#       four rows in odometer order.
+# --------------------------------------------------------------------------
+
+law grid_len_step:
+  for r: List<&2, F32>
+  for +rest: List<&2, List<&2, F32>>
+  {S.grid_len(r <> rest) == Nat.mul(S.sweep_len(r), S.grid_len(rest)) : Nat}
+
+# (d) the row SHAPE: every grid point is a row of exactly one value per
+# dimension -- the walk conses one dimension's value per step
+law grid_row_shape:
+  for +gs: List<&2, List<&2, F32>>
+  for i: Nat
+  {S.sweep_len(S.grid_row(gs, i)) == S.rows_len(gs) : Nat}
+
+# (a) THE COORDINATE LAW -- the col_to_row analog at the grid: field j of
+# grid point i IS dimension j's value at the mixed-radix digit of i.
+# Unconditional: past beyond the dims both sides read the default (an
+# empty range reads 0.0), and a past-total i keeps its walk's digit --
+# the point is still read consistently, the coverage/rejection half is
+# the guard's business, not this read's.
+law grid_coord:
+  for +gs: List<&2, List<&2, F32>>
+  for i: Nat
+  for j: Nat
+  {S.sweep_nth(S.grid_row(gs, i), j)
+     == S.sweep_nth(S.grid_dim(gs, j), S.grid_digit(gs, i, j)) : F32}
+
+# (a') the digit-pin: the coordinate list's element j IS the direct
+# digit -- the mixed-radix number the point decodes to is the same in
+# both readings
+law grid_coords_digit:
+  for +gs: List<&2, List<&2, F32>>
+  for i: Nat
+  for j: Nat
+  {S.seed_nth(S.grid_coords(gs, i), j) == S.grid_digit(gs, i, j) : Nat}
+
+# --------------------------------------------------------------------------
+# the validator's and-elimination halves: (a) nonempty, (b) width,
+# (c) shared config -- the sweep_ok family at the grid level
+# --------------------------------------------------------------------------
+
+law grid_ok_nonempty:
+  for +gs: List<&2, List<&2, F32>>
+  for +c: R.Config
+  for +h: {S.grid_ok(gs, c) == True{} : Bool}
+  {S.grid_nonempty(gs) == True{} : Bool}
+
+law grid_ok_len:
+  for +gs: List<&2, List<&2, F32>>
+  for +c: R.Config
+  for +h: {S.grid_ok(gs, c) == True{} : Bool}
+  {Nat.is_le(S.grid_len(gs), 8n) == True{} : Bool}
+
+law grid_ok_cfg:
+  for +gs: List<&2, List<&2, F32>>
+  for +c: R.Config
+  for +h: {S.grid_ok(gs, c) == True{} : Bool}
+  {R.ok(c) == True{} : Bool}
+
+# (c) THE GRID CONTRACT -- the composition capstone (the sweep_contract
+# shape): a VALIDATED grid, at any in-bounds point i and any projection j
+# of the shared config:
+#   (a) PARAMS IN: point i's field j IS dim j's value at point i's digit
+#       (the coordinate law instantiated);
+#   (b) RESULTS OUT: lane i of the fixed 8-wide fan IS run i -- the grid
+#       has total points, the width witness derived from the validator;
+#   (c) ROUTING CLEAN: the shared config's routing contract at j (the
+#       PR.routing_contract_at bridge).
+# The triple is heterogeneous (F32 / String / Bool), so the conjunction
+# is the pair equality -- the sweep_contract bundle verbatim.
+law grid_contract:
+  for +gs: List<&2, List<&2, F32>>
+  for +c: R.Config
+  for +runs: List<&2, String>
+  for +tk: Nat
+  for +i: Nat
+  for +j: Nat
+  for +h: {S.grid_ok(gs, c) == True{} : Bool}
+  for hk: R.lt_ok(i, S.grid_len(gs))
+  for hj: R.lt_ok(j, R.projs_len(R.cfg_projs(c)))
+  {(S.sweep_nth(S.grid_row(gs, i), j),
+    S.str_nth(S.fan8(S.grid_len(gs), runs), i),
+    S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j))
+   ==
+   (S.sweep_nth(S.grid_dim(gs, j), S.grid_digit(gs, i, j)),
+    S.str_nth(runs, i),
+    True{})
+   : F32 & (String & Bool)}
+
+# --------------------------------------------------------------------------
+# the instance pins -- a literal 2x2 grid: dim 0 = [0.5, 1.5], dim 1 =
+# [2.5, 3.5] (the same shape as col_row_inst's 2-sim columns).  Row-major
+# enumeration: [0.5,2.5], [0.5,3.5], [1.5,2.5], [1.5,3.5] -- dim 0
+# slowest.  The kernel computes the full mixed-radix walk on the literals
+# (the countdown, the splits, the reads), so these pins are the load-
+# bearing POSITIVE instances: every point routes to the right row and the
+# digits are the right mixed-radix digits.
+# --------------------------------------------------------------------------
+
+def GRID() -> List<&2, List<&2, F32>>:
+  (0.5 <> 1.5 <> Nil{}) <> (2.5 <> 3.5 <> Nil{}) <> Nil{}
+
+law grid_len_inst:
+  {S.grid_len(GRID()) == 4n : Nat}
+
+law grid_row_inst_0:
+  {S.grid_row(GRID(), 0n) == 0.5 <> 2.5 <> Nil{} : List<&2, F32>}
+
+law grid_row_inst_1:
+  {S.grid_row(GRID(), 1n) == 0.5 <> 3.5 <> Nil{} : List<&2, F32>}
+
+law grid_row_inst_2:
+  {S.grid_row(GRID(), 2n) == 1.5 <> 2.5 <> Nil{} : List<&2, F32>}
+
+law grid_row_inst_3:
+  {S.grid_row(GRID(), 3n) == 1.5 <> 3.5 <> Nil{} : List<&2, F32>}
+
+# the digits of the 2x2 grid -- mixed-radix by construction: point 2 is
+# dim 0's second value, point 2's coordinate 0 is 1 (2 div 2), point 2's
+# coordinate 1 is 0 (2 mod 2)
+law grid_digit_inst_2_0:
+  {S.grid_digit(GRID(), 2n, 0n) == 1n : Nat}
+
+law grid_digit_inst_2_1:
+  {S.grid_digit(GRID(), 2n, 1n) == 0n : Nat}
+
+law grid_digit_inst_3_1:
+  {S.grid_digit(GRID(), 3n, 1n) == 1n : Nat}
+
+# the coordinate law at a literal (the col_row_inst convention)
+law grid_coord_inst:
+  {S.sweep_nth(S.grid_row(GRID(), 3n), 1n) == 3.5 : F32}
+
+# the mixed-radix round trip: point 3's digits decode back to 3 (the
+# injectivity pin -- for i < total the digits identify the point)
+law grid_index_inst:
+  {S.grid_index(GRID(), S.grid_coords(GRID(), 3n)) == 3n : Nat}
+
+# the positive validator pin: the literal 2x2 grid passes -- dims
+# nonempty, product 4 <= 8 lanes, the shared config ok (the P2
+# connectome sweep's CS_CONFIG)
+law grid_ok_inst:
+  {S.grid_ok(GRID(), CS_CONFIG()) == True{} : Bool}
+
+# the JSON grid ingress pin (the json_sweep_instance convention): the
+# DECODED columns of a 2-column sweep ARE the grid's dimensions -- the
+# decoded [_2000, _2100] x [_3000] cross product enumerates row-major,
+# and grid point 1 IS the assembled row [2100-sc, 3000-sc] (the columns
+# ingress data reused as grid ranges, transcription pinned by the same
+# decode laws)
+law grid_json_inst:
+  {S.grid_row(J.sw_cols(J.json_sweep_decode(
+      "{\"sweep_names\":[\"a\",\"b\"],\"sweep_cols\":[[2000,2100],[3000]]}")), 1n)
+     == (J.sw_f32_of(2100n) <> J.sw_f32_of(3000n) <> Nil{})
+   : List<&2, F32>}

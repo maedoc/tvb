@@ -1304,3 +1304,180 @@ def Laws.sweep_out_contract(t, blocks, c, i, s, h, hi):
                w => (S.sweep_row(S.out_block(blocks, i), s), w),
                S.out_block(S.out_fan(S.sweep_len(t), blocks), i),
                S.out_block(blocks, i), hblk))
+
+# --------------------------------------------------------------------------
+# P6 -- the GRID: proofs
+# --------------------------------------------------------------------------
+# The grid laws are LOCKSTEP laws: the row walk, the coordinate walk and
+# the digit walk all split by the SAME tail-product expression
+# (split(grid_len(rest), i)), so every head arm closes by {==} (the two
+# sides reduce to the SAME split term) and every deep arm is the
+# induction hypothesis at (rest, remainder, j-1) -- the col_to_row_go
+# shape.  No divmod arithmetic is unfolded on symbolic indices: the walk
+# terms are opaque and syntactically shared, which is exactly what keeps
+# the checker's conversion work definitional.  The split countdown
+# itself and the digits' decode round trip compute freely on the literal
+# instance pins.
+
+def Laws.grid_len_step(r, rest):
+  {==}
+
+# the row-shape induction: peel one dimension per step -- the walk conses
+# one value per dimension, so the length counts the dimensions; the
+# stuck split term rides the shrunken index unchanged.
+def grid_row_shape_go(gs: List<&2, List<&2, F32>>, +i: Nat)
+  -> {S.sweep_len(S.grid_row(gs, i)) == S.rows_len(gs) : Nat}:
+  match gs:
+    case Nil{}:
+      {==}
+    case r <> +rest:
+      Equal.cong(Nat, Nat, z => 1n+z,
+                 S.sweep_len(S.grid_row_go(rest, S.split_r(S.split(S.grid_len(rest), i)))),
+                 S.rows_len(rest),
+                 grid_row_shape_go(rest, S.split_r(S.split(S.grid_len(rest), i))))
+
+def Laws.grid_row_shape(gs, i):
+  grid_row_shape_go(gs, i)
+
+# the coordinate law: the lockstep peel of (gs, j).  Head: both sides
+# reduce to the same head-split term.  Deep: the goal IS the induction
+# hypothesis at the shrunken index (the split's remainder) -- no
+# arithmetic, the walks are the same expression.
+def grid_coord_go(gs: List<&2, List<&2, F32>>, +i: Nat, j: Nat)
+  -> {S.sweep_nth(S.grid_row(gs, i), j)
+        == S.sweep_nth(S.grid_dim(gs, j), S.grid_digit(gs, i, j)) : F32}:
+  match gs j:
+    case Nil{} _:
+      {==}
+    case r <> rest 0n:
+      {==}
+    case r <> +rest 1n+p:
+      grid_coord_go(rest, S.split_r(S.split(S.grid_len(rest), i)), p)
+
+def Laws.grid_coord(gs, i, j):
+  grid_coord_go(gs, i, j)
+
+# the digit-pin: the coords list and the direct digit walk are the same
+# walk -- head arm reads the split's digit off the list, deep arm the
+# shrunken list's element j-1 (the col_to_row_go proof shape).
+def grid_coords_digit_go(gs: List<&2, List<&2, F32>>, +i: Nat, j: Nat)
+  -> {S.seed_nth(S.grid_coords(gs, i), j) == S.grid_digit(gs, i, j) : Nat}:
+  match gs j:
+    case Nil{} _:
+      {==}
+    case r <> rest 0n:
+      {==}
+    case r <> +rest 1n+p:
+      grid_coords_digit_go(rest, S.split_r(S.split(S.grid_len(rest), i)), p)
+
+def Laws.grid_coords_digit(gs, i, j):
+  grid_coords_digit_go(gs, i, j)
+
+# the validator's and-elimination halves (the sweep_rows_ok pattern):
+# grid_ok = nonempty /\ (width /\ R.ok).
+def Laws.grid_ok_nonempty(gs, c, h):
+  PR.and_elim_l_go(S.grid_nonempty(gs),
+                   Bool.and(Nat.is_le(S.grid_len(gs), 8n), R.ok(c)), h)
+
+def Laws.grid_ok_len(gs, c, h):
+  PR.and_elim_l_go(Nat.is_le(S.grid_len(gs), 8n), R.ok(c),
+                   PR.and_elim_r_go(S.grid_nonempty(gs),
+                                    Bool.and(Nat.is_le(S.grid_len(gs), 8n),
+                                             R.ok(c)), h))
+
+def Laws.grid_ok_cfg(gs, c, h):
+  PR.and_elim_r_go(Nat.is_le(S.grid_len(gs), 8n), R.ok(c),
+                   PR.and_elim_r_go(S.grid_nonempty(gs),
+                                    Bool.and(Nat.is_le(S.grid_len(gs), 8n),
+                                             R.ok(c)), h))
+
+# THE CAPSTONE -- the sweep_contract shape at the grid's sim count: the
+# coord half from Laws.grid_coord, the fan half from fan8_exact with the
+# width DERIVED from the grid validator, the routing half from the
+# PR.routing_contract_at bridge.  The index witness rides in Bool form
+# (sw_le_b) and is rebuilt per use; the fan half and the param half both
+# consume it (the mc_contract idiom).
+def Laws.grid_contract(gs, c, runs, tk, i, j, h, hk, hj):
+  +h2 = h
+  +hkB = sw_le_b(Nat.add(i, 1n), S.grid_len(gs), hk)
+  hwB = Laws.grid_ok_len(gs, c, h2)
+  hw = PR.b_le(S.grid_len(gs), 8n, hwB)
+  hok = Laws.grid_ok_cfg(gs, c, h2)
+  hcoord = Laws.grid_coord(gs, i, j)
+  hfan = Laws.fan8_exact(runs, S.grid_len(gs), i, hw,
+                         PR.b_le(Nat.add(i, 1n), S.grid_len(gs), hkB))
+  hrun = PR.routing_contract_at(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c),
+                                tk, j, hok, {==}, {==}, hj)
+  Equal.trans(F32 & (String & Bool),
+    (S.sweep_nth(S.grid_row(gs, i), j),
+     S.str_nth(S.fan8(S.grid_len(gs), runs), i),
+     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
+    (S.sweep_nth(S.grid_dim(gs, j), S.grid_digit(gs, i, j)),
+     S.str_nth(S.fan8(S.grid_len(gs), runs), i),
+     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
+    (S.sweep_nth(S.grid_dim(gs, j), S.grid_digit(gs, i, j)),
+     S.str_nth(runs, i), True{}),
+    Equal.cong(F32, F32 & (String & Bool),
+               w => (w,
+                     S.str_nth(S.fan8(S.grid_len(gs), runs), i),
+                     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
+               S.sweep_nth(S.grid_row(gs, i), j),
+               S.sweep_nth(S.grid_dim(gs, j), S.grid_digit(gs, i, j)), hcoord),
+    Equal.trans(F32 & (String & Bool),
+      (S.sweep_nth(S.grid_dim(gs, j), S.grid_digit(gs, i, j)),
+       S.str_nth(S.fan8(S.grid_len(gs), runs), i),
+       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
+      (S.sweep_nth(S.grid_dim(gs, j), S.grid_digit(gs, i, j)),
+       S.str_nth(runs, i),
+       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
+      (S.sweep_nth(S.grid_dim(gs, j), S.grid_digit(gs, i, j)),
+       S.str_nth(runs, i), True{}),
+      Equal.cong(String, F32 & (String & Bool),
+                 w => (S.sweep_nth(S.grid_dim(gs, j), S.grid_digit(gs, i, j)), w,
+                       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
+                 S.str_nth(S.fan8(S.grid_len(gs), runs), i),
+                 S.str_nth(runs, i), hfan),
+      Equal.cong(Bool, F32 & (String & Bool),
+                 w => (S.sweep_nth(S.grid_dim(gs, j), S.grid_digit(gs, i, j)),
+                       S.str_nth(runs, i), w),
+                 S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j),
+                 True{}, hrun)))
+
+# the instance pins: pure computation on the literal 2x2 grid -- the
+# countdown splits, the row reads and the decode round trip all compute
+# on concrete input (the tier-2 "literals pin transcription" tier).
+def Laws.grid_len_inst():
+  {==}
+
+def Laws.grid_row_inst_0():
+  {==}
+
+def Laws.grid_row_inst_1():
+  {==}
+
+def Laws.grid_row_inst_2():
+  {==}
+
+def Laws.grid_row_inst_3():
+  {==}
+
+def Laws.grid_digit_inst_2_0():
+  {==}
+
+def Laws.grid_digit_inst_2_1():
+  {==}
+
+def Laws.grid_digit_inst_3_1():
+  {==}
+
+def Laws.grid_coord_inst():
+  {==}
+
+def Laws.grid_index_inst():
+  {==}
+
+def Laws.grid_ok_inst():
+  {==}
+
+def Laws.grid_json_inst():
+  {==}
