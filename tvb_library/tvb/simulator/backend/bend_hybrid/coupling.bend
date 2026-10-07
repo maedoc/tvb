@@ -33,6 +33,7 @@ import Base
 import ./router.bend as R
 import ./kernel.bend as K
 import ./hist.bend as H
+import ./mconfig.bend as M
 
 # --------------------------------------------------------------------------
 # the range: the exact floats fed to the average
@@ -158,3 +159,48 @@ def cs_set(cs: List<&2, List<&2, F32>>, tgt: Nat, s: Nat,
 def cs_add(+cs: List<&2, List<&2, F32>>, +tgt: Nat, +tc: Nat,
            +v: F32, +zero: F32) -> List<&2, List<&2, F32>>:
   cs_set(cs, tgt, tc, F32.add(cs_get(cs, tgt, tc, zero), v), zero)
+
+# --------------------------------------------------------------------------
+# THE CVAR PLANE (COUPLING_LAWS_DESIGN.md families C1/C2 -- the stage-A
+# PREREQS, next law family): the tape becomes [lane][cvar][tick], so the
+# read names the cvar.  The plane is a plain list of per-lane cvar-tape
+# lists, so every existing tape law applies PER ROW unchanged -- no new
+# memory theory, just an index.  Row machinery: cs_row is re-used
+# VERBATIM for the inner (cvar) level; plane_row is the same pattern one
+# level up (the outer list's element type differs, so the def is spelled
+# out -- the doc's "reuse cs_row verbatim, the tape plane is the same
+# shape").  The write side of the plane (which cvar's tape an edge_write
+# addresses) is stage B/C; this section pins the READ only.
+# --------------------------------------------------------------------------
+
+# the L-th lane's cvar list (the cs_row pattern at the plane level;
+# missing lanes read as the empty cvar list, the nats_nth convention)
+def plane_row(tapes: List<&2, List<&2, List<&2, F32>>>, tgt: Nat)
+    -> List<&2, List<&2, F32>>:
+  match tapes tgt:
+    case Nil{} _:
+      Nil{}
+    case h <> t 0n:
+      h
+    case h <> t 1n+p:
+      plane_row(t, p)
+
+# the v-th cvar tape of lane L: row (L, v) of the plane (cs_row re-used
+# verbatim at the cvar level; missing cvars read the empty tape)
+def cvar_tape(tapes: List<&2, List<&2, List<&2, F32>>>, L: Nat, v: Nat)
+    -> List<&2, F32>:
+  cs_row(plane_row(tapes, L), v)
+
+# the cvar-SELECTIVE routed read (C2): the routed window against the
+# SOURCE cvar's tape -- p.svar at lane p.src.  The window POSITION is
+# exactly edge_cells' section-9 routing (route_window at the source
+# lane's newest, width w); d/w ride as parameters because the M-view
+# (mconfig.bend) carries src/tgt/svar/tcvar only -- the cvar axis is
+# what this function adds, the routing shape is re-used, not re-derived.
+def edge_cells_cvar(+ls: List<&2, R.Lane>, +p: M.MProj, +d: Nat, +w: Nat,
+                    +tapes: List<&2, List<&2, List<&2, F32>>>, +ic: F32)
+    -> List<&2, F32>:
+  win_cells(cvar_tape(tapes, M.mproj_src(p), M.mproj_svar(p)),
+            R.win_lo(R.route_window(R.lane_newest(R.nth_lane(ls, M.mproj_src(p))),
+                                    d, w)),
+            w, ic)
