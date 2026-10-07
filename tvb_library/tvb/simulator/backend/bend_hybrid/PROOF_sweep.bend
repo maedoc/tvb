@@ -1131,3 +1131,176 @@ def Laws.sweep_seeded_contract(t, seeds, c, runs, i, h, hs, hkB, hsB):
                  w => (S.sweep_word(t, i), S.seed_ref(seeds, i), w),
                  S.str_nth(S.fan8(S.sweep_len(t), runs), i),
                  S.str_nth(runs, i), hfan)))
+
+# --------------------------------------------------------------------------
+# P5 -- the OUTPUT UN-ROUTING: proofs
+# --------------------------------------------------------------------------
+# out_block route half: the sweep_row_nth induction at the block level --
+# peel one block per step; the witness refines with the peel; the Nil
+# cases are absurd through the witness.
+
+def out_block_nth_go(i: Nat, outs: List<&2, List<&2, List<&2, F32>>>,
+                     h: R.lt_ok(i, S.outs_len(outs)))
+  -> {S.out_block(outs, i) == S.out_block_ref(outs, i) : List<&2, List<&2, F32>>}:
+  match i outs h:
+    case 0n Nil{} hlt:
+      Empty.absurd({S.out_block(Nil{}, 0n) == S.out_block_ref(Nil{}, 0n)
+                    : List<&2, List<&2, F32>>}, hlt)
+    case 0n o0 <> t _:
+      {==}
+    case 1n+p Nil{} hlt:
+      Empty.absurd({S.out_block(Nil{}, 1n+p) == S.out_block_ref(Nil{}, 1n+p)
+                    : List<&2, List<&2, F32>>}, hlt)
+    case 1n+p o0 <> t hlt:
+      out_block_nth_go(p, t, hlt)
+
+def Laws.out_route(outs, i, s, hi, hs):
+  hblk = out_block_nth_go(i, outs, hi)
+  hrow = Laws.sweep_row_nth(S.out_block(outs, i), s, hs)
+  h2 = Equal.cong((List<&2, List<&2, F32>>), List<&2, F32>,
+                  w => S.sweep_row_ref(w, s),
+                  S.out_block(outs, i), S.out_block_ref(outs, i), hblk)
+  Equal.trans(List<&2, F32>,
+    S.out_slice(outs, i, s),
+    S.sweep_row_ref(S.out_block(outs, i), s),
+    S.out_slice_ref(outs, i, s),
+    hrow, h2)
+
+# out_block_route: the fan8_exact induction at the output plane -- peel
+# one lane of out_fan_go per step.  Two witnesses: lt_ok(i, a) -- the lane
+# is active (an inactive lane contributes NO block, so a phantom Nil would
+# clash); le_ok(a, w) -- the WIDTH witness, load-bearing at w = 0 with
+# a > 0 (dropped lanes).  Blocks may stay symbolic in the a = 0 arms and
+# the i = 0 active arm: the fan cell reduces without looking past the
+# block table's head.
+def out_block_route_go(w: Nat, a: Nat,
+                       blocks: List<&2, List<&2, List<&2, F32>>>, i: Nat,
+                       hw: R.le_ok(a, w), h: R.lt_ok(i, a))
+  -> {S.out_block(S.out_fan_go(w, a, blocks), i) == S.out_block(blocks, i)
+      : List<&2, List<&2, F32>>}:
+  match w a blocks i hw h:
+    case 0n 0n blks _ _ hlt:
+      Empty.absurd({S.out_block(S.out_fan_go(0n, 0n, blks), i)
+                      == S.out_block(blks, i) : List<&2, List<&2, F32>>},
+                   lt_zero_absurd(i, hlt))
+    case 0n 1n+d blks _ hw _:
+      Empty.absurd({S.out_block(S.out_fan_go(0n, 1n+d, blks), i)
+                      == S.out_block(blks, i) : List<&2, List<&2, F32>>}, hw)
+    case 1n+s 0n blks 0n _ hlt:
+      Empty.absurd({S.out_block(S.out_fan_go(1n+s, 0n, blks), 0n)
+                      == S.out_block(blks, 0n) : List<&2, List<&2, F32>>}, hlt)
+    case 1n+s 0n blks 1n+p _ hlt:
+      Empty.absurd({S.out_block(S.out_fan_go(1n+s, 0n, blks), 1n+p)
+                      == S.out_block(blks, 1n+p) : List<&2, List<&2, F32>>}, hlt)
+    case 1n+s 1n+d rns 0n _ _:
+      {==}
+    case 1n+s 1n+d r0 <> t 1n+p hw hlt:
+      out_block_route_go(s, d, t, p, hw, hlt)
+    case 1n+s 1n+d Nil{} 1n+p hw hlt:
+      out_block_route_go(s, d, Nil{}, p, hw, hlt)
+
+def Laws.out_block_route(blocks, n, i, hw, h):
+  out_block_route_go(8n, n, blocks, i, hw, h)
+
+# out_fan_len: induction on (w, a) in lockstep.  The width witness is
+# load-bearing at w = 0 with a > 0 (dropped lanes: the output has 0
+# blocks, not a); the a = 0 arm goes through the all-inactive lemma (the
+# fan contributes nothing, so the count is 0); the step counts the head
+# block and the induction hypothesis.
+def out_fan_zero_len_go(w: Nat, blocks: List<&2, List<&2, List<&2, F32>>>)
+  -> {S.outs_len(S.out_fan_go(w, 0n, blocks)) == 0n : Nat}:
+  match w:
+    case 0n:
+      {==}
+    case 1n+s:
+      out_fan_zero_len_go(s, S.outs_tail(blocks))
+
+def out_fan_len_go(w: Nat, a: Nat,
+                   blocks: List<&2, List<&2, List<&2, F32>>>,
+                   hw: R.le_ok(a, w))
+  -> {S.outs_len(S.out_fan_go(w, a, blocks)) == a : Nat}:
+  match w a blocks hw:
+    case 0n 0n _ _:
+      {==}
+    case 0n 1n+d _ hw:
+      Empty.absurd({S.outs_len(S.out_fan_go(0n, 1n+d, Nil{})) == 1n+d : Nat}, hw)
+    case 1n+s 0n blks _:
+      out_fan_zero_len_go(s, S.outs_tail(blks))
+    case 1n+s 1n+d r0 <> t hw:
+      Equal.cong(Nat, Nat, z => 1n+z,
+                 S.outs_len(S.out_fan_go(s, d, t)), d,
+                 out_fan_len_go(s, d, t, hw))
+    case 1n+s 1n+d Nil{} hw:
+      Equal.cong(Nat, Nat, z => 1n+z,
+                 S.outs_len(S.out_fan_go(s, d, Nil{})), d,
+                 out_fan_len_go(s, d, Nil{}, hw))
+
+def Laws.out_fan_len(blocks, n, hw):
+  out_fan_len_go(8n, n, blocks, hw)
+
+# out_block_len: induction on the subnet count -- the builder conses one
+# series per count step, so the length counts in lockstep.
+def block_len_go(+n: Nat, +series: List<&2, List<&2, F32>>)
+  -> {S.rows_len(S.block_go(n, series)) == n : Nat}:
+  match n:
+    case 0n:
+      {==}
+    case 1n+p:
+      Equal.cong(Nat, Nat, z => 1n+z,
+                 S.rows_len(S.block_go(p, S.rows_drop(series, 1n))), p,
+                 block_len_go(p, S.rows_drop(series, 1n)))
+
+def Laws.out_block_len(n, series):
+  block_len_go(n, series)
+
+# the instance pins: pure computation on the literal 2x2 output table.
+def Laws.out_slice_inst_0_0():
+  {==}
+
+def Laws.out_slice_inst_0_1():
+  {==}
+
+def Laws.out_slice_inst_1_0():
+  {==}
+
+def Laws.out_slice_inst_1_1():
+  {==}
+
+# the output capstone: two cong steps under Equal.trans -- the block half
+# from Laws.out_block_route (width witness DERIVED from the sweep
+# validator, sweep_ok_width), the cell half the same route lifted through
+# the proved series read (sweep_row).  The first trans leg is the
+# definitional unfold of out_slice into block-read + series-read.
+def Laws.sweep_out_contract(t, blocks, c, i, s, h, hi):
+  hwB = Laws.sweep_ok_width(t, c, h)
+  hw = PR.b_le(S.sweep_len(t), 8n, hwB)
+  +hblk = Laws.out_block_route(blocks, S.sweep_len(t), i, hw, hi)
+  hcell = Equal.cong((List<&2, List<&2, F32>>), List<&2, F32>,
+                     w => S.sweep_row(w, s),
+                     S.out_block(S.out_fan(S.sweep_len(t), blocks), i),
+                     S.out_block(blocks, i), hblk)
+  hAB = Equal.trans(List<&2, F32> & List<&2, List<&2, F32>>,
+    (S.out_slice(S.out_fan(S.sweep_len(t), blocks), i, s),
+     S.out_block(S.out_fan(S.sweep_len(t), blocks), i)),
+    (S.sweep_row(S.out_block(S.out_fan(S.sweep_len(t), blocks), i), s),
+     S.out_block(S.out_fan(S.sweep_len(t), blocks), i)),
+    (S.sweep_row(S.out_block(blocks, i), s),
+     S.out_block(S.out_fan(S.sweep_len(t), blocks), i)),
+    {==},
+    Equal.cong((List<&2, F32>),
+               (List<&2, F32> & (List<&2, List<&2, F32>>)),
+               w => (w, S.out_block(S.out_fan(S.sweep_len(t), blocks), i)),
+               S.sweep_row(S.out_block(S.out_fan(S.sweep_len(t), blocks), i), s),
+               S.sweep_row(S.out_block(blocks, i), s), hcell))
+  Equal.trans(List<&2, F32> & List<&2, List<&2, F32>>,
+    (S.out_slice(S.out_fan(S.sweep_len(t), blocks), i, s),
+     S.out_block(S.out_fan(S.sweep_len(t), blocks), i)),
+    (S.sweep_row(S.out_block(blocks, i), s),
+     S.out_block(S.out_fan(S.sweep_len(t), blocks), i)),
+    (S.sweep_row(S.out_block(blocks, i), s), S.out_block(blocks, i)),
+    hAB,
+    Equal.cong((List<&2, List<&2, F32>>),
+               (List<&2, F32> & (List<&2, List<&2, F32>>)),
+               w => (S.sweep_row(S.out_block(blocks, i), s), w),
+               S.out_block(S.out_fan(S.sweep_len(t), blocks), i),
+               S.out_block(blocks, i), hblk))

@@ -605,3 +605,142 @@ def seeds_unique(seeds: List<&2, Nat>) -> Bool:
 def sweep_seed_ok(+seeds: List<&2, Nat>, +c: R.Config) -> Bool:
   Bool.and(Nat.is_le(R.nats_len(seeds), 8n),
            Bool.and(seeds_unique(seeds), R.ok(c)))
+
+# --------------------------------------------------------------------------
+# P5 -- the OUTPUT UN-ROUTING (SWEEP_LAWS_DESIGN.md, gap 9): which slice of
+# the sweep's output belongs to which subnet x sim -- the reverse routing,
+# the demos' per-subnet extraction (simulate_hybrid_getting_started.py:
+# "the per-subnetwork time series are CONCATENATED in the order they appear
+# in subnets"; a sweep adds the outer per-sim dimension).
+#
+# REPRESENTATION (the cs shape, one level up): one sim's output BLOCK is a
+# `List<&2, List<&2, F32>>` -- one SERIES (List<&2, F32>) per subnet, in
+# subnet order; a sweep's output is a `List<&2, List<&2, List<&2, F32>>>`
+# -- one block per sim, in lane order.  The reads reuse the coupling
+# state's 2-level read pattern out of the box: out_block is the cs_row
+# read at the block level, and the series WITHIN a block is read by
+# sweep_row / sweep_row_ref (the proved row reads -- a block IS a row
+# table whose rows are series).
+#
+# THE OUTPUT IS THE FAN'S PRODUCT: out_fan is the output plane's fan --
+# the same fixed-8-wide lane/gate structure as fan8 (lane k active iff
+# k < n, the SAME activity decider), with each active lane contributing
+# ITS run's output block.  Inactive lanes contribute NOTHING (not an
+# empty block): the gathered output has exactly n_sims blocks -- the
+# string fan's "" cells exist because gather needs a String per lane; at
+# the block plane the per-sim blocks are the concatenation, and the empty
+# block would be a phantom sim's output.
+# --------------------------------------------------------------------------
+
+# the sweep output's block count -- the outer bounds witness
+
+def outs_len(outs: List<&2, List<&2, List<&2, F32>>>) -> Nat:
+  match outs:
+    case Nil{}:
+      0n
+    case h <> t:
+      1n+outs_len(t)
+
+# sim i's output block: block i of the sweep's output; missing blocks read
+# as the empty block (the cs_row default convention)
+def out_block(outs: List<&2, List<&2, List<&2, F32>>>,
+              i: Nat) -> List<&2, List<&2, F32>>:
+  match outs i:
+    case Nil{} _:
+      Nil{}
+    case h <> t 0n:
+      h
+    case h <> t 1n+p:
+      out_block(t, p)
+
+# the reference block read, built the offset way: drop i blocks, take the
+# head (the rows_drop / rows_head_or pattern).  An INDEPENDENT
+# implementation of the same read -- out_route pins the agreement, which
+# is what rules out an off-by-one in the un-routing.
+def outs_drop(outs: List<&2, List<&2, List<&2, F32>>>,
+              k: Nat) -> List<&2, List<&2, List<&2, F32>>>:
+  match outs k:
+    case Nil{} _:
+      Nil{}
+    case h <> t 0n:
+      h <> t
+    case h <> t 1n+p:
+      outs_drop(t, p)
+
+def outs_head_or(outs: List<&2, List<&2, List<&2, F32>>>,
+                 +d: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match outs:
+    case Nil{}:
+      d
+    case h <> t:
+      h
+
+def out_block_ref(outs: List<&2, List<&2, List<&2, F32>>>,
+                  i: Nat) -> List<&2, List<&2, F32>>:
+  outs_head_or(outs_drop(outs, i), Nil{})
+
+# subnet s's series of sim i's block: the cs_get pattern -- read the
+# block, then the series within it (sweep_row, the proved row read; a
+# block's rows ARE series).  Past either end: the empty series.
+def out_slice(outs: List<&2, List<&2, List<&2, F32>>>, i: Nat,
+             s: Nat) -> List<&2, F32>:
+  sweep_row(out_block(outs, i), s)
+
+def out_slice_ref(outs: List<&2, List<&2, List<&2, F32>>>, i: Nat,
+                  s: Nat) -> List<&2, F32>:
+  sweep_row_ref(out_block_ref(outs, i), s)
+
+# the block table's tail (the str_tail pattern at the block level)
+def outs_tail(outs: List<&2, List<&2, List<&2, F32>>>)
+  -> List<&2, List<&2, List<&2, F32>>>:
+  match outs:
+    case Nil{}:
+      Nil{}
+    case h <> t:
+      t
+
+# lane k's contribution: its block consed onto the rest iff k < a, else
+# just the rest (inactive lanes contribute NOTHING -- the empty block
+# would be a phantom sim's output).  The total decider keeps out_fan_go
+# single-scrutinee (the fan_go convention: the laws' go-lemmas must see
+# through the fan's recursion).
+def lane_cons(a: Nat, +r: List<&2, List<&2, F32>>,
+              +rest: List<&2, List<&2, List<&2, F32>>>)
+  -> List<&2, List<&2, List<&2, F32>>>:
+  match a:
+    case 0n:
+      rest
+    case 1n+d:
+      r <> rest
+
+# the output plane's fan: the fixed 8-wide fan over per-sim output blocks
+# -- lane k's block iff k < n, else nothing.
+def out_fan_go(w: Nat, +a: Nat,
+               +blocks: List<&2, List<&2, List<&2, F32>>>)
+  -> List<&2, List<&2, List<&2, F32>>>:
+  match w:
+    case 0n:
+      Nil{}
+    case 1n+s:
+      lane_cons(a, out_block(blocks, 0n),
+                out_fan_go(s, a_tail(a), outs_tail(blocks)))
+
+def out_fan(+n: Nat, +blocks: List<&2, List<&2, List<&2, F32>>>)
+  -> List<&2, List<&2, List<&2, F32>>>:
+  out_fan_go(8n, n, blocks)
+
+# the per-sim block BUILDER: one series per subnet, subnets in lane order
+# -- the demos' per-subnet extraction reversed (the engine writes one
+# series per subnet of the shared config).  A short series list yields
+# EMPTY series (the sweep_row default), never a short block: the block's
+# shape is the config's subnet count BY CONSTRUCTION -- out_block_len pins
+# it.
+def block_go(k: Nat, +series: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match k:
+    case 0n:
+      Nil{}
+    case 1n+p:
+      sweep_row(series, 0n) <> block_go(p, rows_drop(series, 1n))
+
+def block_of(+n: Nat, +series: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  block_go(n, series)

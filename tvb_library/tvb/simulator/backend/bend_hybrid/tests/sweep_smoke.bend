@@ -40,6 +40,18 @@ def main() -> IO(Unit):
                                    <> Nil{},
                                  R.Config{1n <> 2n <> Nil{},
                                           R.Proj{0n, 1n, 1n, 0n, 0n} <> Nil{}, 4n})
+  # the output un-routing (P5): a literal 2-sim x 2-subnet output table --
+  # sim 1 subnet 0's series head reads back ITS OWN value (4.0); the
+  # gathered output of a 2-sweep has exactly 2 blocks; a 9-sweep's gathered
+  # output has exactly 8 (the fixed fan's drop, made visible).
+  +OUTS : List<&2, List<&2, List<&2, F32>>> =
+    {(0.0 <> 1.0 <> Nil{}) <> (2.0 <> 3.0 <> Nil{}) <> Nil{}
+      : List<&2, List<&2, F32>>}
+      <> {(4.0 <> 5.0 <> Nil{}) <> (6.0 <> 7.0 <> Nil{}) <> Nil{}
+      : List<&2, List<&2, F32>>} <> Nil{}
+  +o10 : Bool = F32.is_eq(S.sweep_head_or(S.out_slice(OUTS, 1n, 0n), 0.0), 4.0)
+  +ofan2 : Bool = Nat.is_eq(S.outs_len(S.out_fan(2n, OUTS)), 2n)
+  +ofan9 : Bool = Nat.is_eq(S.outs_len(S.out_fan(9n, OUTS)), 8n)
   +out : String = " " ++ S.gather(S.fan8(3n, runs)) ++ "\n"
     ++ " " ++ S.gather(S.fan8(8n, runs)) ++ "\n"
     ++ " " ++ S.gather(S.fan8(0n, runs)) ++ "\n"
@@ -51,6 +63,9 @@ def main() -> IO(Unit):
     ++ " " ++ Bool.show(w1) ++ "\n"
     ++ " " ++ Bool.show(d1) ++ "\n"
     ++ " " ++ Bool.show(csbad) ++ "\n"
+    ++ " " ++ Bool.show(o10) ++ "\n"
+    ++ " " ++ Bool.show(ofan2) ++ "\n"
+    ++ " " ++ Bool.show(ofan9) ++ "\n"
   do IO<Unit>:
     IO.print(out)
 
@@ -65,3 +80,6 @@ def main() -> IO(Unit):
 #| True
 #| True
 #| False
+#| True
+#| True
+#| True

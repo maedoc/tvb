@@ -792,3 +792,128 @@ law sweep_seeded_contract:
    ==
    (S.sweep_word(t, i), S.seed_ref(seeds, i), S.str_nth(runs, i))
    : F32 & (Nat & String)}
+
+# --------------------------------------------------------------------------
+# P5 -- the OUTPUT UN-ROUTING (SWEEP_LAWS_DESIGN.md, gap 9): which slice of
+# the sweep's output belongs to which subnet x sim -- the reverse routing,
+# the demos' per-subnet extraction.  Representation and the out_fan fan
+# mirror are documented in sweep.bend: one sim's output block is
+# List<&2, List<&2, F32>> (one series per subnet, the cs shape), a sweep's
+# output is one block per sim in lane order, and the block's series are
+# read with the PROVED row reads (sweep_row / sweep_row_ref -- a block IS
+# a row table whose rows are series).
+# --------------------------------------------------------------------------
+
+# the un-routing law: the recursive read and the two-level drop+head
+# reference read agree, bounded by witnesses on BOTH indices -- the outer
+# witness pins the block exists, the inner witness pins the series is
+# inside the block.  Past either end the claim is UNSTATABLE (the witness
+# cannot be fabricated).  The proof composes the block-level read route
+# (the sweep_row_nth induction at the block level) with the PROVED
+# row-read route (sweep_row_nth) instantiated at the routed block.
+law out_route:
+  for +outs: List<&2, List<&2, List<&2, F32>>>
+  for +i: Nat
+  for +s: Nat
+  for hi: R.lt_ok(i, S.outs_len(outs))
+  for hs: R.lt_ok(s, S.rows_len(S.out_block(outs, i)))
+  {S.out_slice(outs, i, s) == S.out_slice_ref(outs, i, s) : List<&2, F32>}
+
+# the block route: the i-th block of the fan's gathered output IS sim i's
+# block -- fan8_exact's OTHER END, at the output plane.  The string fan's
+# gather output at lane i IS run i (fan8_exact, proved); run i's output IS
+# block i; out_fan is the output plane's fan with the same lane/gate
+# structure, so this law is that composition: reading the gathered output
+# un-routes to the run table.  BOTH witnesses are load-bearing (the
+# fan8_exact analysis carries verbatim): without lt_ok(i, n) a phantom
+# block (Nil) would claim to be a real sim's output; without le_ok(n, 8)
+# an n > 8 sweep claims blocks the fan does not have.
+law out_block_route:
+  for +blocks: List<&2, List<&2, List<&2, F32>>>
+  for n: Nat
+  for i: Nat
+  for hw: R.le_ok(n, 8n)
+  for h: R.lt_ok(i, n)
+  {S.out_block(S.out_fan(n, blocks), i) == S.out_block(blocks, i)
+   : List<&2, List<&2, F32>>}
+
+# the outer SHAPE law: the gathered output has exactly n_sims blocks --
+# the width witness is load-bearing (n > 8 silently drops sims and the
+# output is 8 blocks, not n).  Inactive lanes contribute nothing (the
+# empty block would be a phantom sim's output), so the count is exact.
+law out_fan_len:
+  for +blocks: List<&2, List<&2, List<&2, F32>>>
+  for n: Nat
+  for hw: R.le_ok(n, 8n)
+  {S.outs_len(S.out_fan(n, blocks)) == n : Nat}
+
+# the inner SHAPE law: a block built for n subnets has exactly n series --
+# the demos' per-subnet extraction reversed (the engine writes one series
+# per subnet).  A short series list yields EMPTY series (the sweep_row
+# default), never a short block: the block's shape is the config's subnet
+# count BY CONSTRUCTION.  Unconditional: the builder takes exactly n.
+law out_block_len:
+  for +n: Nat
+  for +series: List<&2, List<&2, F32>>
+  {S.rows_len(S.block_of(n, series)) == n : Nat}
+
+# the instance pins (the csr_row_good convention): a literal 2-sim x
+# 2-subnet output table un-routes correctly -- each (i, s) cell reads back
+# ITS OWN series.  The literal table: sim 0's subnets carry [0,1] and
+# [2,3], sim 1's carry [4,5] and [6,7].
+def OUT_S00() -> List<&2, F32>:
+  0.0 <> 1.0 <> Nil{}
+
+def OUT_S01() -> List<&2, F32>:
+  2.0 <> 3.0 <> Nil{}
+
+def OUT_S10() -> List<&2, F32>:
+  4.0 <> 5.0 <> Nil{}
+
+def OUT_S11() -> List<&2, F32>:
+  6.0 <> 7.0 <> Nil{}
+
+def OUT_BLK_0() -> List<&2, List<&2, F32>>:
+  OUT_S00() <> OUT_S01() <> Nil{}
+
+def OUT_BLK_1() -> List<&2, List<&2, F32>>:
+  OUT_S10() <> OUT_S11() <> Nil{}
+
+def OUTS() -> List<&2, List<&2, List<&2, F32>>>:
+  OUT_BLK_0() <> OUT_BLK_1() <> Nil{}
+
+law out_slice_inst_0_0:
+  {S.out_slice(OUTS(), 0n, 0n) == OUT_S00() : List<&2, F32>}
+
+law out_slice_inst_0_1:
+  {S.out_slice(OUTS(), 0n, 1n) == OUT_S01() : List<&2, F32>}
+
+law out_slice_inst_1_0:
+  {S.out_slice(OUTS(), 1n, 0n) == OUT_S10() : List<&2, F32>}
+
+law out_slice_inst_1_1:
+  {S.out_slice(OUTS(), 1n, 1n) == OUT_S11() : List<&2, F32>}
+
+# THE OUTPUT CONTRACT -- the composition capstone (the sweep_csr_contract
+# pattern): a VALIDATED sweep, at any in-bounds sim i, un-routes its
+# output correctly:
+#   (a) BLOCK OUT: sim i's output block in the gathered output IS run i's
+#       output block (out_block_route, the width witness DERIVED from the
+#       sweep validator -- sweep_ok_width);
+#   (b) CELL OUT: subnet s's series within the gathered output IS the
+#       (i, s) cell read straight off the run table (the block route
+#       lifted through sweep_row, the proved series read).
+law sweep_out_contract:
+  for +t: List<&2, F32>
+  for +blocks: List<&2, List<&2, List<&2, F32>>>
+  for +c: R.Config
+  for +i: Nat
+  for +s: Nat
+  for +h: {S.sweep_ok(t, c) == True{} : Bool}
+  for hi: R.lt_ok(i, S.sweep_len(t))
+  {(S.out_slice(S.out_fan(S.sweep_len(t), blocks), i, s),
+    S.out_block(S.out_fan(S.sweep_len(t), blocks), i))
+   ==
+   (S.sweep_row(S.out_block(blocks, i), s),
+    S.out_block(blocks, i))
+   : List<&2, F32> & (List<&2, List<&2, F32>>)}

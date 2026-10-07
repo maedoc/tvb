@@ -230,9 +230,8 @@ Sweep side:
    F32 scalars; needs a variant payload type.
 8. Grid sweeps (cross-product of independent ranges) — columns vary
    together per row; a grid needs the row = grid-point construction.
-9. Output un-routing: which slice of the concatenated output belongs to
-   which subnet x sim (the demos' per-subnet extraction) — the reverse
-   routing, slice_nth-shaped. Arguably the most user-visible gap.
+9. Output un-routing — **Status: implemented** (LAWS_sweep.bend's P5
+   family, 9 laws, gates green; see the priority list's P5).
 10. Monitor variety: tavg covered (count + ZOH); BOLD and per-subnet
     monitor periods not.
 
@@ -242,8 +241,8 @@ the engine mirror of fan_gather_order's LAW.
 ## Priority list 2026-10-05 (user-scoped from the gap inventory)
 
 OUT OF SCOPE / DEFERRED: arbitrary dt ratios (formalism boundary, kept out);
-model sweeps (user: not for now); output un-routing, grid sweeps, delay-unit
-conversion, coupling-function variety (backlog).
+model sweeps (user: not for now); grid sweeps, delay-unit conversion,
+coupling-function variety (backlog).
 
 P1. MONITORING VARIETY (per-subnet or global). Today: one shared master
 count (count_shared / monitor_zoh_average). Missing: per-subnet monitors
@@ -316,3 +315,32 @@ MODEL), and cvar_ok_good (the demo's named config accepted).  Negative
 control bad/bad_cvar_name.bend: a projection naming a variable the
 target model lacks resolves to junk and is rejected by the bounds
 check.
+
+P5. OUTPUT UN-ROUTING — **Status: implemented** (sweep.bend's output
+plane, LAWS_sweep.bend's P5 family, 9 laws, gates green). The output
+plane is a nested list: one sim's output BLOCK is `List<&2, List<&2,
+F32>>` (one series per subnet, the cs shape), a sweep's output is one
+block per sim in lane order. The reads reuse the coupling state's
+2-level read pattern OUT OF THE BOX: `out_block` is the cs_row read at
+the block level, and the series WITHIN a block is read by the PROVED row
+reads (`sweep_row`/`sweep_row_ref` — a block IS a row table whose rows
+are series). The output IS the fan's product: `out_fan` is the output
+plane's fan (same fixed-8-wide lane/gate structure, single-scrutinee
+match with the `lane_cons` decider), and inactive lanes contribute
+NOTHING — the gathered output has exactly n_sims blocks (the string
+fan's "" cells exist because gather needs a String per lane; an empty
+block would be a phantom sim's output). Laws: `out_route` (the recursive
+read and the two-level drop+head reference read agree, bounded by
+witnesses on BOTH indices — the block witness and the series witness),
+`out_block_route` (the i-th block of the gathered output IS sim i's
+block — fan8_exact's other end at the output plane; both witnesses
+load-bearing), the shape laws `out_fan_len` (exactly n_sims blocks, the
+width witness load-bearing) and `out_block_len` (a block built for n
+subnets has exactly n series — by construction; a short series list
+yields empty series, never a short block), the four (i, s) instance pins
+over a literal 2-sim x 2-subnet table, and the capstone
+`sweep_out_contract` (a validated sweep un-routes: block i IS run i's
+block AND subnet s's series IS the (i, s) cell — the pair-equality
+bundle, width witness derived from sweep_ok_width). Negative control
+bad/bad_out.bend: an out-of-range (i, s) cell claim (the empty default
+vs a real series) is rejected.
