@@ -4389,3 +4389,20 @@ def routing_contract_at(+c: R.Config, +ls: List<&2, R.Lane>, +ps: List<&2, R.Pro
                           R.l_i1(R.nth_line(R.tick_lines(R.ticks(t, ls, ps)), i)))))
    == True{} : Bool}:
   Laws.routing_contract(c, ls, ps, t, i, h, hls, hps, hb)
+
+# --------------------------------------------------------------------------
+# 8d. the monitor-composition bridge (the monitoring-variety layer)
+# --------------------------------------------------------------------------
+# newest_at as a PLAIN def, so PROOF_mons.bend can compose the per-subnet
+# monitor's count laws with the lane publication schedule: filled laws do
+# not re-export across module imports, plain defs do (the
+# routing_contract_at pattern above).  The body is one call -- the proof
+# is newest_at's, already kernel-checked in this file; the conclusion type
+# is spelled out so the monitor's rate-count and lane-count laws consume
+# it directly.
+def newest_at_at(+k: Nat, +q: Nat, +r: Nat, +n: Nat,
+                 h: {Nat.is_ge(k, 1n) == True{} : Bool},
+                 hr: {Nat.is_le(r, Nat.sub(k, 1n)) == True{} : Bool})
+  -> {R.lane_newest(R.steps(Nat.add(Nat.mul(q, k), r), R.Lane{k, Nat.sub(k, 1n), n}))
+        == Nat.add(n, q) : Nat}:
+  Laws.newest_at(k, q, r, n, h, hr)
