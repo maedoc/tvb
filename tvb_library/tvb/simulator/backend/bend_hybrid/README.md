@@ -223,7 +223,10 @@ what could be proved about values, and at what cost.
 The suite is a ladder: arithmetic and structural **bricks** at the
 bottom, and a handful of **capstones** at the top that a reader should
 actually care about. Here are the load-bearing ones, in the order the
-ladder climbs.
+ladder climbs. The suite lives in six files: `LAWS_router.bend` (the
+routing core), `LAWS_sweep.bend` (sweeps + output), `LAWS_mconfig.bend`
+(heterogeneous models), `LAWS_mons.bend` (monitors), `LAWS_json.bend`
+(runtime ingress), `LAWS.bend` (model level).
 
 ### 2.1 The schedule — *how stale can a slow subnet's input be?* (Q1)
 
@@ -378,6 +381,17 @@ question). The engine fans the batch over a **fixed 8 parallel lanes**:
 lane `k` runs sim `k`; lanes past `n_sweep` sit idle (their slot costs a
 match, not a simulation); per-sim outputs concatenate in lane order.
 
+```mermaid
+flowchart TD
+  T["the sweep table -- n parameter rows"] --> L0["lane 0 runs sim 0"]
+  T --> L1["lane 1 runs sim 1"]
+  T --> LM["..."]
+  T --> L7["lane 7 -- idle when n < 8"]
+  L0 --> O0["output block 0"]
+  L1 --> O1["output block 1"]
+  L7 --> O7["no output"]
+```
+
 **What can go wrong.** Sim 3 reads row 2 (index arithmetic off by one);
 a sweep wider than the fan silently loses sims (no error — they simply
 never run); the gather puts sim 4's output in block 3; a malformed row
@@ -419,6 +433,63 @@ for sweeps (the schema choice — per-sim rows vs per-parameter columns),
 and the byte→word decode of the packed sweep table (the decode machinery
 is shared with the edge sections and pinned by the packed-roundtrip laws
 of `LAWS.bend`).
+
+### 2.11 The heterogeneous models — *which cvar belongs to which model*
+
+Subnets run *different models* with different state variables, and a
+projection names coupling variables **by name** — `'y1'` on JansenRit,
+`'xi'` on FitzHugh–Nagumo — resolved *per model* (34 laws,
+`LAWS_mconfig.bend`):
+
+- **the name resolves per model** (`cvar_resolve_cross`): the same name
+  resolves differently in two models — `'xi'` is index 0 on FHN and junk
+  on JansenRit. An unknown name lands on the junk index (one past every
+  valid slot), so the bounds check *rejects* it (`bad_cvar_name`).
+- **the resolved index is the projection's index** (`cvar_resolve_proj`)
+  and is in range (`cvar_resolve_bounded`) — the projection can only
+  touch a variable its model actually has.
+- **the named-config JSON ingress**: configs can name cvars in JSON
+  (`svar_names` / `proj_svars` / `proj_tcvars`); the decode is total and
+  validated named configs route clean at every tick
+  (`json_named_contract`).
+
+Numpy gloss: `cvar_idx = model.state_variables.index('y1')` — plus
+`assert proj.tcvar < n_cvars[target_model]`.
+
+### 2.12 Monitoring variety — *who samples what, how often*
+
+(13 laws, `LAWS_mons.bend`)
+
+- **a per-subnet monitor samples at its own rate** `m`: after
+  `t = q·m + r` master ticks the sample count is exactly `q` — the
+  witness form (`mon_rate_count`), since division is not provable.
+  Numpy gloss: `count = t // m`.
+- **a per-lane monitor's count is its lane's publication count**
+  (`mon_lane_count`, composing `newest_at`) — the monitor on a slow
+  subnet counts that subnet's publications, not the master's ticks.
+- **the divisor is the monitor's own count** (`mon_divisor`): the
+  per-subnet average divides by its own sample count, not the shared
+  master count — the per-own-step hazard the shared-count law's comment
+  warns about, pinned. Boundary convention: no sample at tick 0
+  (instance-pinned); a rate-0 monitor is rejected.
+
+### 2.13 The engine side, in numpy
+
+Each law family pins one line of engine behaviour — the same claims,
+said as code:
+
+| family | the law pins | in numpy |
+|---|---|---|
+| schedule (Q1) | publish count, staleness ≤ k−1 | `newest = t // k`; `age = t - newest` |
+| the read | no read sees the future | `assert i1 <= newest` |
+| the window (Q2) | exactly w samples | `x[lo+1 : hi+1]` has `w = hi - lo` elements |
+| non-aliasing | distinct in-horizon delays, distinct slots | `buf[(n - d) % cap]` injective for `d < cap` |
+| the ring | ring delivers the tape's sample | `ring[i % cap] == tape[i]` below the fence |
+| the average | the range, then the site | `c[tgt, tc] += f32_sum(tape[lo+1 : lo+1+w]) / den` |
+| the sweep | params in, results out, in order | `sim_i.param == table[i]`; `out == [run(k) for k in range(n)]` |
+| the fan width | n > 8 rejected, not dropped | `assert n_sweep <= 8` at load time |
+| the monitors | the per-subnet count | `count = t // m`, per monitor |
+| the cvars | model-relative resolution | `idx = names.index(name)`; `idx < n_cvars` |
 
 ## 3. How the proofs work
 
@@ -469,7 +540,9 @@ kernel (the checker/kernel trust story: see `ECOSYSTEM.md` — keep
 | `coupling.bend` | the average's range (`win_cells`/`edge_cells`) and write site (`Write`, `cs`) |
 | `json_ingest.bend` | the total JSON decoder (explicit state machine) |
 | `LAWS_router.bend` / `PROOF_router.bend` | the 175 claims and their proofs |
-| `LAWS_sweep.bend` / `PROOF_sweep.bend` | the 15 sweep claims and their proofs |
+| `LAWS_sweep.bend` / `PROOF_sweep.bend` | the 73 sweep claims and their proofs (params, connectomes, seeds, output un-routing) |
+| `LAWS_mconfig.bend` / `PROOF_mconfig.bend` | the 34 model-heterogeneity claims (cvar bounds, schemes, name-resolution, named-config ingress) |
+| `LAWS_mons.bend` / `PROOF_mons.bend` | the 13 monitoring-variety claims |
 | `sweep.bend` | the sweep spec: the parameter table, the fan, the gather |
 | `LAWS_json.bend` / `PROOF_json.bend` | the ingress claims and proofs |
 | `bad/` | negative controls — must be rejected |
