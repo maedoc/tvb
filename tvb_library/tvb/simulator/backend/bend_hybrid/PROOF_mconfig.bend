@@ -1,0 +1,263 @@
+# PROOF_mconfig.bend -- the proofs for LAWS_mconfig.bend.  The gate:
+#
+#   bend PROOF_mconfig.bend            must print ALL PROOFS CHECK
+#   bend PROOF_mconfig.bend --verdict  re-checked by the Lean-proved kernel
+#
+# House style (PROOF_router.bend / PROOF_sweep.bend): quantified laws go
+# through go-lemmas that match the shrinking argument plus the witnesses;
+# witness types (R.lt_ok) refine by passing the peeled witness straight
+# through (lt_ok(1n+q, 1n+L) and lt_ok(q, L) share the normal form
+# le_ok(1n+q, L)); {==} closes what normalises; the and-elimination
+# helpers are PROOF_router's plain defs (PR.and_elim_l_go / and_elim_r_go
+# -- plain defs re-export across module imports where filled laws do
+# not).  The capstone's index transport is the sw_le_b/b_le Bool
+# roundtrip (copied from PROOF_sweep.bend, which copied it for the same
+# reason: the le_ok_iff law fill does not re-export).
+import Base
+import ./LAWS_mconfig.bend as Laws
+import ./mconfig.bend as M
+import ./router.bend as R
+import ./sweep.bend as S
+import ./PROOF_router.bend as PR
+
+# False is not True: the motive sends True to Empty, so transporting along a
+# proof of {False == True} lands in Empty and anything follows.
+def Bool.mot(b: Bool) -> Type:
+  match b:
+    case True{}:
+      Empty
+    case False{}:
+      Unit
+
+def Bool.fne(-A: Type, e: {False{} == True{} : Bool}) -> A:
+  Empty.absurd(A, (%e : Bool.mot(_)
+  Unit{}))
+
+# the Type->Bool direction for an lt_ok witness is NOT needed here: the
+# capstone's index witness is stated in Bool form directly (see
+# LAWS_mconfig.mc_contract), so both consumers rebuild their own Type
+# witness from it with PR.b_le.
+
+# --------------------------------------------------------------------------
+# the instance pins: pure computation, definitional
+# --------------------------------------------------------------------------
+
+def Laws.mc_ok_good():
+  {==}
+
+def Laws.mc_ok_bad_cvar():
+  {==}
+
+# --------------------------------------------------------------------------
+# the inversion family: mc_ok == True decomposes into its four flat
+# conjuncts, one and_elim walk each (PR.and_elim_l_go / and_elim_r_go)
+# --------------------------------------------------------------------------
+
+def Laws.mc_ok_shape(shapes, mps, c, h):
+  PR.and_elim_l_go(Nat.is_eq(R.nats_len(shapes), R.nats_len(R.cfg_lanes(c))),
+                   Bool.and(M.mprojs_src_ok(shapes, mps),
+                   Bool.and(M.mprojs_tgt_ok(shapes, mps),
+                            R.ok(c))),
+                   h)
+
+def Laws.mc_ok_src_cvar(shapes, mps, c, h):
+  +h2 = h
+  PR.and_elim_l_go(M.mprojs_src_ok(shapes, mps),
+                   Bool.and(M.mprojs_tgt_ok(shapes, mps), R.ok(c)),
+                   PR.and_elim_r_go(Nat.is_eq(R.nats_len(shapes), R.nats_len(R.cfg_lanes(c))),
+                                    Bool.and(M.mprojs_src_ok(shapes, mps),
+                                    Bool.and(M.mprojs_tgt_ok(shapes, mps),
+                                             R.ok(c))),
+                                    h2))
+
+def Laws.mc_ok_tgt_cvar(shapes, mps, c, h):
+  +h2 = h
+  PR.and_elim_l_go(M.mprojs_tgt_ok(shapes, mps), R.ok(c),
+                   PR.and_elim_r_go(M.mprojs_src_ok(shapes, mps),
+                                    Bool.and(M.mprojs_tgt_ok(shapes, mps), R.ok(c)),
+                                    PR.and_elim_r_go(Nat.is_eq(R.nats_len(shapes), R.nats_len(R.cfg_lanes(c))),
+                                                     Bool.and(M.mprojs_src_ok(shapes, mps),
+                                                     Bool.and(M.mprojs_tgt_ok(shapes, mps),
+                                                              R.ok(c))),
+                                                     h2)))
+
+def Laws.mc_ok_base(shapes, mps, c, h):
+  PR.and_elim_r_go(M.mprojs_tgt_ok(shapes, mps), R.ok(c),
+                   PR.and_elim_r_go(M.mprojs_src_ok(shapes, mps),
+                                    Bool.and(M.mprojs_tgt_ok(shapes, mps), R.ok(c)),
+                                    PR.and_elim_r_go(Nat.is_eq(R.nats_len(shapes), R.nats_len(R.cfg_lanes(c))),
+                                                     Bool.and(M.mprojs_src_ok(shapes, mps),
+                                                     Bool.and(M.mprojs_tgt_ok(shapes, mps),
+                                                              R.ok(c))),
+                                                     h)))
+
+# --------------------------------------------------------------------------
+# the per-index forms: induction on the view, peeling the index.  The
+# Nil case is absurd (i < 0, through PR.lt_ok_nil_absurd); the head case
+# is the fold's head conjunct; the succ case recurses into the tail with
+# the tail conjunct.  The peeled witness passes straight through:
+# lt_ok(1n+q, 1n+|tail|) and lt_ok(q, |tail|) share the normal form.
+# --------------------------------------------------------------------------
+
+def mc_src_nth_go(+shapes: List<&2, Nat>, +mps: List<&2, M.MProj>, +i: Nat,
+                  h: R.lt_ok(i, M.mprojs_len(mps)),
+                  hok: {M.mprojs_src_ok(shapes, mps) == True{} : Bool})
+    -> {M.mproj_src_ok(shapes, M.nth_mproj(mps, i)) == True{} : Bool}:
+  match mps i h:
+    case Nil{} _ h:
+      Empty.absurd({M.mproj_src_ok(shapes, M.nth_mproj(Nil{}, i)) == True{} : Bool},
+                   PR.lt_ok_nil_absurd(i, h))
+    case p <> t 0n _:
+      PR.and_elim_l_go(M.mproj_src_ok(shapes, p), M.mprojs_src_ok(shapes, t), hok)
+    case p <> t 1n+q hlt:
+      mc_src_nth_go(shapes, t, q, hlt,
+                    PR.and_elim_r_go(M.mproj_src_ok(shapes, p),
+                                     M.mprojs_src_ok(shapes, t), hok))
+
+def Laws.mc_src_nth(shapes, mps, i, h, hok):
+  mc_src_nth_go(shapes, mps, i, h, hok)
+
+def mc_tgt_nth_go(+shapes: List<&2, Nat>, +mps: List<&2, M.MProj>, +i: Nat,
+                  h: R.lt_ok(i, M.mprojs_len(mps)),
+                  hok: {M.mprojs_tgt_ok(shapes, mps) == True{} : Bool})
+    -> {M.mproj_tgt_ok(shapes, M.nth_mproj(mps, i)) == True{} : Bool}:
+  match mps i h:
+    case Nil{} _ h:
+      Empty.absurd({M.mproj_tgt_ok(shapes, M.nth_mproj(Nil{}, i)) == True{} : Bool},
+                   PR.lt_ok_nil_absurd(i, h))
+    case p <> t 0n _:
+      PR.and_elim_l_go(M.mproj_tgt_ok(shapes, p), M.mprojs_tgt_ok(shapes, t), hok)
+    case p <> t 1n+q hlt:
+      mc_tgt_nth_go(shapes, t, q, hlt,
+                    PR.and_elim_r_go(M.mproj_tgt_ok(shapes, p),
+                                     M.mprojs_tgt_ok(shapes, t), hok))
+
+def Laws.mc_tgt_nth(shapes, mps, i, h, hok):
+  mc_tgt_nth_go(shapes, mps, i, h, hok)
+
+# --------------------------------------------------------------------------
+# the pairing laws: induction on the projections, peeling the index.
+# mview recurses on the projections ONLY (the cvar lists ride through
+# nats_nth/nats_tail), so the head's src/tgt fields normalize without
+# case-splitting the cvar lists and the recursion is direct.
+# --------------------------------------------------------------------------
+
+def mview_len_go(+ps: List<&2, R.Proj>, +svs: List<&2, Nat>, +tvs: List<&2, Nat>)
+    -> {M.mprojs_len(M.mview(ps, svs, tvs)) == R.projs_len(ps) : Nat}:
+  match ps:
+    case Nil{}:
+      {==}
+    case p <> t:
+      Equal.cong(Nat, Nat, n => Nat.add(1n, n),
+                 M.mprojs_len(M.mview(t, M.nats_tail(svs), M.nats_tail(tvs))),
+                 R.projs_len(t),
+                 mview_len_go(t, M.nats_tail(svs), M.nats_tail(tvs)))
+
+def Laws.mview_len(ps, svs, tvs):
+  mview_len_go(ps, svs, tvs)
+
+def mview_src_nth_go(+ps: List<&2, R.Proj>, +svs: List<&2, Nat>, +tvs: List<&2, Nat>,
+                     +i: Nat, h: R.lt_ok(i, R.projs_len(ps)))
+    -> {M.mproj_src(M.nth_mproj(M.mview(ps, svs, tvs), i))
+          == R.proj_src(R.nth_proj(ps, i)) : Nat}:
+  match ps i h:
+    case Nil{} _ h:
+      Empty.absurd({M.mproj_src(M.nth_mproj(M.mview(Nil{}, svs, tvs), i))
+                      == R.proj_src(R.nth_proj(Nil{}, i)) : Nat},
+                   PR.lt_ok_nil_absurd(i, h))
+    case p <> t 0n _:
+      {==}
+    case p <> t 1n+q hlt:
+      mview_src_nth_go(t, M.nats_tail(svs), M.nats_tail(tvs), q, hlt)
+
+def Laws.mview_src_nth(ps, svs, tvs, i, h):
+  mview_src_nth_go(ps, svs, tvs, i, h)
+
+def mview_tgt_nth_go(+ps: List<&2, R.Proj>, +svs: List<&2, Nat>, +tvs: List<&2, Nat>,
+                     +i: Nat, h: R.lt_ok(i, R.projs_len(ps)))
+    -> {M.mproj_tgt(M.nth_mproj(M.mview(ps, svs, tvs), i))
+          == R.proj_tgt(R.nth_proj(ps, i)) : Nat}:
+  match ps i h:
+    case Nil{} _ h:
+      Empty.absurd({M.mproj_tgt(M.nth_mproj(M.mview(Nil{}, svs, tvs), i))
+                      == R.proj_tgt(R.nth_proj(Nil{}, i)) : Nat},
+                   PR.lt_ok_nil_absurd(i, h))
+    case p <> t 0n _:
+      {==}
+    case p <> t 1n+q hlt:
+      mview_tgt_nth_go(t, M.nats_tail(svs), M.nats_tail(tvs), q, hlt)
+
+def Laws.mview_tgt_nth(ps, svs, tvs, i, h):
+  mview_tgt_nth_go(ps, svs, tvs, i, h)
+
+# --------------------------------------------------------------------------
+# THE CAPSTONE: mc_contract.  Three components, one pair-of-pairs
+# equality.  The cvar halves come from the per-index laws -- but their
+# witness is on the VIEW's length while hi is on the projections', so
+# the index is transported ONCE through mview_len by the Bool roundtrip
+# (witness -> Bool claim, cong along the length equality, Bool ->
+# witness).  The routing half is the bridge PR.routing_contract_at (the
+# routing_contract law at the shared config, ties {==} since the law
+# instantiates ls/ps definitionally), exactly as sweep_contract's third
+# conjunct is discharged.  The three component equalities assemble into
+# the triple by cong on each component + Equal.trans, the sweep_contract
+# assembly.
+# --------------------------------------------------------------------------
+
+def Laws.mc_contract(shapes, svs, tvs, c, t, i, h, hib):
+  +mv = M.mview(R.cfg_projs(c), svs, tvs)
+  # the four mc_ok conjuncts (h rides in three copies, the +h2 idiom)
+  +h2 = h
+  +h3 = h2
+  hbase = Laws.mc_ok_base(shapes, mv, c, h)
+  hsrcf = Laws.mc_ok_src_cvar(shapes, mv, c, h2)
+  htgtf = Laws.mc_ok_tgt_cvar(shapes, mv, c, h3)
+  # the index transport: the Bool witness -> a view-length Bool claim,
+  # through mview_len (the length equality) by cong
+  +e_len = Equal.sym(Nat, M.mprojs_len(mv), R.projs_len(R.cfg_projs(c)),
+                    Laws.mview_len(R.cfg_projs(c), svs, tvs))
+  +hiC = Equal.cong(Nat, Bool, x => Nat.is_le(Nat.add(i, 1n), x),
+                   R.projs_len(R.cfg_projs(c)), M.mprojs_len(mv), e_len)
+  +hiC2 = Equal.sym(Bool,
+                   Nat.is_le(Nat.add(i, 1n), R.projs_len(R.cfg_projs(c))),
+                   Nat.is_le(Nat.add(i, 1n), M.mprojs_len(mv)), hiC)
+  +hiView = Equal.trans(Bool,
+                       Nat.is_le(Nat.add(i, 1n), M.mprojs_len(mv)),
+                       Nat.is_le(Nat.add(i, 1n), R.projs_len(R.cfg_projs(c))),
+                       True{}, hiC2, hib)
+  # the three components (each rebuilds its own Type witness from the
+  # Bool form -- witnesses are not +able, the Bool proofs are)
+  hiV1 = PR.b_le(Nat.add(i, 1n), M.mprojs_len(mv), hiView)
+  hiV2 = PR.b_le(Nat.add(i, 1n), M.mprojs_len(mv), hiView)
+  hb = PR.b_le(Nat.add(i, 1n), R.projs_len(R.cfg_projs(c)), hib)
+  hsrc = Laws.mc_src_nth(shapes, mv, i, hiV1, hsrcf)
+  htgt = Laws.mc_tgt_nth(shapes, mv, i, hiV2, htgtf)
+  hroute = PR.routing_contract_at(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c),
+                                  t, i, hbase, {==}, {==}, hb)
+  # the assembly: (a, b, r) == (True, True, True), cong per component
+  Equal.trans(Bool & (Bool & Bool),
+    (M.mproj_src_ok(shapes, M.nth_mproj(mv, i)),
+     M.mproj_tgt_ok(shapes, M.nth_mproj(mv, i)),
+     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), t, i)),
+    (True{}, M.mproj_tgt_ok(shapes, M.nth_mproj(mv, i)),
+     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), t, i)),
+    (True{}, True{}, True{}),
+    Equal.cong(Bool, Bool & (Bool & Bool),
+               x => (x,
+                     M.mproj_tgt_ok(shapes, M.nth_mproj(mv, i)),
+                     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), t, i)),
+               M.mproj_src_ok(shapes, M.nth_mproj(mv, i)), True{}, hsrc),
+    Equal.trans(Bool & (Bool & Bool),
+      (True{}, M.mproj_tgt_ok(shapes, M.nth_mproj(mv, i)),
+       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), t, i)),
+      (True{}, True{},
+       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), t, i)),
+      (True{}, True{}, True{}),
+      Equal.cong(Bool, Bool & (Bool & Bool),
+                 y => (True{}, y,
+                       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), t, i)),
+                 M.mproj_tgt_ok(shapes, M.nth_mproj(mv, i)), True{}, htgt),
+      Equal.cong(Bool, Bool & (Bool & Bool),
+                 z => (True{}, True{}, z),
+                 S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), t, i),
+                 True{}, hroute)))
