@@ -880,3 +880,254 @@ def Laws.sweep_csr_contract(indptr, ixs, pays, c, h, i, hi):
                  w => (S.pay_ref(pays, i), True{}, w),
                  S.pay_shape_ok(S.pay_nth(pays, i), R.nats_len(ixs)),
                  True{}, hshape)))
+
+# --------------------------------------------------------------------------
+# P3b -- the STOCHASTIC SEEDS: proofs
+# --------------------------------------------------------------------------
+# Two arithmetic bricks first.  Laws.add_zero / Laws.add_succ exist as
+# PROOF_router law FILLS, which do not re-export across module imports
+# (the NOTES rule), so their go-lemmas are copied here -- the sw_le_b
+# precedent.
+def add_zero_l(x: Nat) -> {Nat.add(x, 0n) == x : Nat}:
+  match x:
+    case 0n:
+      {==}
+    case 1n+p:
+      Equal.cong(Nat, Nat, z => 1n+z, Nat.add(p, 0n), p, add_zero_l(p))
+
+def add_succ_r(a: Nat, b: Nat) -> {Nat.add(a, 1n+b) == 1n+Nat.add(a, b) : Nat}:
+  match a:
+    case 0n:
+      {==}
+    case 1n+p:
+      Equal.cong(Nat, Nat, z => 1n+z,
+                 Nat.add(p, 1n+b), Nat.add(1n+p, b),
+                 add_succ_r(p, b))
+
+# the instance pins: pure computation on the literal seed column.
+def Laws.seed_nth_head(h, t):
+  {==}
+
+def Laws.seed_nth_step(h, t, k):
+  {==}
+
+# seed_route: the sweep_nth_route induction over a Nat column -- peel one
+# element per step; the witness refines with the peel; the Nil cases are
+# absurd through the witness.
+def seed_nth_route_go(k: Nat, xs: List<&2, Nat>, h: R.lt_ok(k, R.nats_len(xs)))
+  -> {S.seed_nth(xs, k) == S.seed_ref(xs, k) : Nat}:
+  match k xs h:
+    case 0n Nil{} hlt:
+      Empty.absurd({S.seed_nth(Nil{}, 0n) == S.seed_ref(Nil{}, 0n) : Nat}, hlt)
+    case 0n h0 <> t _:
+      {==}
+    case 1n+p Nil{} hlt:
+      Empty.absurd({S.seed_nth(Nil{}, 1n+p) == S.seed_ref(Nil{}, 1n+p) : Nat}, hlt)
+    case 1n+p h0 <> t hlt:
+      seed_nth_route_go(p, t, hlt)
+
+def Laws.seed_route(xs, k, h):
+  seed_nth_route_go(k, xs, h)
+
+def Laws.seed_route_inst_0():
+  {==}
+
+def Laws.seed_route_inst_1():
+  {==}
+
+def Laws.seed_route_inst_2():
+  {==}
+
+# seed_row_nth: induction with the row counter k shrinking and the sim
+# index i peeled in lockstep; the running index j rides (the go concludes
+# the j-generalized form add(base, add(j, i)), of which the law's
+# add(base, i) is the j = 0n instance -- Nat.add(0n, i) reduces to i).
+# The base case bridges Nat.add(j, 0n) to j with add_zero_l; the step
+# bridges Nat.add(j, 1n+p) to 1n+Nat.add(j, p) with add_succ_r -- the two
+# stuck-Nat.add normal forms the counted loop produces.
+def seed_row_nth_go(+base: Nat, k: Nat, +j: Nat, i: Nat, h: R.lt_ok(i, k))
+  -> {S.seed_nth(S.seed_row_go(base, k, j), i)
+        == Nat.add(base, Nat.add(j, i)) : Nat}:
+  match k i h:
+    case 0n _ hlt:
+      Empty.absurd({S.seed_nth(S.seed_row_go(base, 0n, j), i)
+                      == Nat.add(base, Nat.add(j, i)) : Nat},
+                   lt_zero_absurd(i, hlt))
+    case 1n+m 0n _:
+      Equal.sym(Nat,
+        Nat.add(base, Nat.add(j, 0n)),
+        Nat.add(base, j),
+        Equal.cong(Nat, Nat, x => Nat.add(base, x),
+                   Nat.add(j, 0n), j, add_zero_l(j)))
+    case 1n+(+m) 1n+(+p) hlt:
+      Equal.trans(Nat,
+        S.seed_nth(S.seed_row_go(base, 1n+m, j), 1n+p),
+        Nat.add(base, 1n+Nat.add(j, p)),
+        Nat.add(base, Nat.add(j, 1n+p)),
+        seed_row_nth_go(base, m, 1n+j, p, hlt),
+        Equal.sym(Nat,
+          Nat.add(base, Nat.add(j, 1n+p)),
+          Nat.add(base, 1n+Nat.add(j, p)),
+          Equal.cong(Nat, Nat, x => Nat.add(base, x),
+                     Nat.add(j, 1n+p), 1n+Nat.add(j, p),
+                     add_succ_r(j, p))))
+
+def Laws.seed_row_nth(base, n, i, h):
+  seed_row_nth_go(base, n, 0n, i, h)
+
+# seed_distinct: induction on the increment base.  At base = 0n both
+# sides reduce to i and j and the claim IS lt_imp_ne; at base = 1n+b both
+# sides peel one successor in lockstep (Nat.add recurses on its FIRST
+# argument, so Nat.add(1n+b, x) reduces to 1n+Nat.add(b, x) and is_ne
+# peels with it).  The lt hypothesis rides along -- Bool proofs are Data.
+def seed_distinct_go(+base: Nat, +i: Nat, +j: Nat,
+                     h: {Nat.is_lt(i, j) == True{} : Bool})
+  -> {Nat.is_ne(Nat.add(base, i), Nat.add(base, j)) == True{} : Bool}:
+  match base:
+    case 0n:
+      PR.lt_imp_ne(i, j, h)
+    case 1n+b:
+      seed_distinct_go(b, i, j, h)
+
+def Laws.seed_distinct(base, i, j, h):
+  seed_distinct_go(base, i, j, h)
+
+# seed_deterministic: the routing read applied twice -- a rerun -- lands
+# on the same reference element both times (seed_route instantiated
+# twice; the index witness is carried in Bool form and rebuilt per use,
+# the mc_contract idiom).
+def Laws.seed_deterministic(seeds, i, hib):
+  +hib2 = hib
+  e1 = Laws.seed_route(seeds, i,
+                       PR.b_le(Nat.add(i, 1n), R.nats_len(seeds), hib))
+  e2 = Laws.seed_route(seeds, i,
+                       PR.b_le(Nat.add(i, 1n), R.nats_len(seeds), hib2))
+  Equal.trans(Nat & Nat,
+    (S.seed_nth(seeds, i), S.seed_nth(seeds, i)),
+    (S.seed_ref(seeds, i), S.seed_nth(seeds, i)),
+    (S.seed_ref(seeds, i), S.seed_ref(seeds, i)),
+    Equal.cong(Nat, Nat & Nat, w => (w, S.seed_nth(seeds, i)),
+               S.seed_nth(seeds, i), S.seed_ref(seeds, i), e1),
+    Equal.cong(Nat, Nat & Nat, w => (S.seed_ref(seeds, i), w),
+               S.seed_nth(seeds, i), S.seed_ref(seeds, i), e2))
+
+# the validator's and-elimination family (the sweep_rows_ok pattern):
+# width /\ (distinct /\ R.ok), each half eliminating down the spine.
+def Laws.sweep_seed_ok_width(seeds, c, h):
+  PR.and_elim_l_go(Nat.is_le(R.nats_len(seeds), 8n),
+                   Bool.and(S.seeds_unique(seeds), R.ok(c)), h)
+
+def Laws.sweep_seed_ok_distinct(seeds, c, h):
+  PR.and_elim_l_go(S.seeds_unique(seeds), R.ok(c),
+                   PR.and_elim_r_go(Nat.is_le(R.nats_len(seeds), 8n),
+                                    Bool.and(S.seeds_unique(seeds), R.ok(c)),
+                                    h))
+
+def Laws.sweep_seed_ok_cfg(seeds, c, h):
+  PR.and_elim_r_go(S.seeds_unique(seeds), R.ok(c),
+                   PR.and_elim_r_go(Nat.is_le(R.nats_len(seeds), 8n),
+                                    Bool.and(S.seeds_unique(seeds), R.ok(c)),
+                                    h))
+
+# the instance pins: pure computation on the literal column and config.
+def Laws.sweep_seed_ok_instance():
+  {==}
+
+def Laws.seeds_unique_dup():
+  {==}
+
+# the per-index distinctness: the ok_no_clash induction over the seed
+# column.  The head lemma peels the clash fold (the head's is_ne is the
+# and-left, the tail's fold the and-right); the pairwise go peels both
+# indices in lockstep, with the equal-index case refuted through the
+# strict-order hypothesis (ia < ib forbids ia == ib).
+def no_clash_nth_go(+s: Nat, ts: List<&2, Nat>, +q: Nat,
+                    hq: R.lt_ok(q, R.nats_len(ts)),
+                    hu: {S.no_seed_clash(s, ts) == True{} : Bool})
+  -> {Nat.is_ne(s, R.nats_nth(ts, q)) == True{} : Bool}:
+  match ts q hq:
+    case Nil{} _ hlt:
+      Empty.absurd({Nat.is_ne(s, R.nats_nth(Nil{}, q)) == True{} : Bool},
+                   PR.lt_ok_nil_absurd(q, hlt))
+    case h0 <> +t 0n _:
+      PR.and_elim_l_go(Nat.is_ne(s, h0), S.no_seed_clash(s, t), hu)
+    case h0 <> +t 1n+p hlt:
+      no_clash_nth_go(s, t, p, hlt,
+                      PR.and_elim_r_go(Nat.is_ne(s, h0),
+                                       S.no_seed_clash(s, t), hu))
+
+def seeds_distinct_go(seeds: List<&2, Nat>, ia: Nat, ib: Nat,
+                      hltb: {Nat.is_lt(ia, ib) == True{} : Bool},
+                      ha: R.lt_ok(ia, R.nats_len(seeds)),
+                      hb: R.lt_ok(ib, R.nats_len(seeds)),
+                      hu: {S.seeds_unique(seeds) == True{} : Bool})
+  -> {Nat.is_ne(R.nats_nth(seeds, ia), R.nats_nth(seeds, ib)) == True{} : Bool}:
+  match seeds ia ha:
+    case Nil{} _ h:
+      Empty.absurd({Nat.is_ne(R.nats_nth(Nil{}, ia), R.nats_nth(Nil{}, ib))
+                      == True{} : Bool},
+                   PR.lt_ok_nil_absurd(ia, h))
+    case +s0 <> +t 0n _:
+      match ib:
+        case 0n:
+          Bool.fne({Nat.is_ne(R.nats_nth(s0 <> t, 0n),
+                              R.nats_nth(s0 <> t, 0n)) == True{} : Bool},
+                   Bool.fne({Nat.is_lt(0n, 0n) == True{} : Bool}, hltb))
+        case 1n+q:
+          no_clash_nth_go(s0, t, q, hb,
+                          PR.and_elim_l_go(S.no_seed_clash(s0, t),
+                                           S.seeds_unique(t), hu))
+    case +s0 <> +t 1n+q hlt:
+      match ib:
+        case 0n:
+          Bool.fne({Nat.is_ne(R.nats_nth(s0 <> t, 1n+q),
+                              R.nats_nth(s0 <> t, 0n)) == True{} : Bool},
+                   Bool.fne({Nat.is_lt(1n+q, 0n) == True{} : Bool}, hltb))
+        case 1n+r:
+          seeds_distinct_go(t, q, r, hltb, hlt, hb,
+                            PR.and_elim_r_go(S.no_seed_clash(s0, t),
+                                             S.seeds_unique(t), hu))
+
+def Laws.seeds_distinct_nth(seeds, ia, ib, hltb, ha, hb, hu):
+  seeds_distinct_go(seeds, ia, ib, hltb, ha, hb, hu)
+
+# THE CAPSTONE.  Three cong steps under Equal.trans -- one per component
+# of the right-nested triple: the param half from Laws.sweep_nth_route,
+# the seed half from Laws.seed_route, the fan half from Laws.fan8_exact
+# with the width witness DERIVED from the parameter validator
+# (sweep_ok_width).  The index witnesses ride in Bool form and are
+# rebuilt per use (the mc_contract idiom -- the param read and the fan
+# BOTH need the table's index witness).
+def Laws.sweep_seeded_contract(t, seeds, c, runs, i, h, hs, hkB, hsB):
+  hwB = Laws.sweep_ok_width(t, c, h)
+  hw = PR.b_le(S.sweep_len(t), 8n, hwB)
+  hparam = Laws.sweep_nth_route(t, i,
+                                PR.b_le(Nat.add(i, 1n), S.sweep_len(t), hkB))
+  hseed = Laws.seed_route(seeds, i,
+                          PR.b_le(Nat.add(i, 1n), R.nats_len(seeds), hsB))
+  hfan = Laws.fan8_exact(runs, S.sweep_len(t), i, hw,
+                         PR.b_le(Nat.add(i, 1n), S.sweep_len(t), hkB))
+  Equal.trans(F32 & (Nat & String),
+    (S.sweep_nth(t, i), S.seed_nth(seeds, i),
+     S.str_nth(S.fan8(S.sweep_len(t), runs), i)),
+    (S.sweep_word(t, i), S.seed_nth(seeds, i),
+     S.str_nth(S.fan8(S.sweep_len(t), runs), i)),
+    (S.sweep_word(t, i), S.seed_ref(seeds, i), S.str_nth(runs, i)),
+    Equal.cong(F32, F32 & (Nat & String),
+               w => (w, S.seed_nth(seeds, i),
+                     S.str_nth(S.fan8(S.sweep_len(t), runs), i)),
+               S.sweep_nth(t, i), S.sweep_word(t, i), hparam),
+    Equal.trans(F32 & (Nat & String),
+      (S.sweep_word(t, i), S.seed_nth(seeds, i),
+       S.str_nth(S.fan8(S.sweep_len(t), runs), i)),
+      (S.sweep_word(t, i), S.seed_ref(seeds, i),
+       S.str_nth(S.fan8(S.sweep_len(t), runs), i)),
+      (S.sweep_word(t, i), S.seed_ref(seeds, i), S.str_nth(runs, i)),
+      Equal.cong(Nat, F32 & (Nat & String),
+                 w => (S.sweep_word(t, i), w,
+                       S.str_nth(S.fan8(S.sweep_len(t), runs), i)),
+                 S.seed_nth(seeds, i), S.seed_ref(seeds, i), hseed),
+      Equal.cong(String, F32 & (Nat & String),
+                 w => (S.sweep_word(t, i), S.seed_ref(seeds, i), w),
+                 S.str_nth(S.fan8(S.sweep_len(t), runs), i),
+                 S.str_nth(runs, i), hfan)))

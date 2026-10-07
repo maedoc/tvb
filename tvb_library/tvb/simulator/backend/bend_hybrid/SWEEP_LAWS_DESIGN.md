@@ -268,6 +268,33 @@ column machinery reused -- plus DISTINCTNESS: two sims never share a seed
 (the delay_injective analog over the seed column); reproducibility =
 determinism given routed seeds.
 
+P3. PER-SUBNET SCHEME + STOCHASTIC SEEDS -- **Status: implemented**
+(LAWS_mconfig.bend scheme family / LAWS_sweep.bend seed family, 24 laws,
+gates green).  (a) SCHEMES: mconfig.bend adds a per-lane scheme id list
+riding alongside the shapes plus a scheme TABLE (`List<&2, Nat>`, its
+length the bound); `scheme_ok` = one id per lane /\ every id inside the
+table /\ base mc_ok; `scheme_bounded` is the per-index bounds form (the
+mc_src_nth pattern); `scheme_nth` pins the routing -- lane i's resolved
+scheme is the table entry its id points at, and the pinned identity
+assignment makes lane i run scheme i (scheme_nth_inst_0/1); negative
+control bad/bad_scheme.bend (out-of-range id rejected).  (b) SEEDS:
+sweep.bend adds the seed column (`List<&2, Nat>`, the sweep_nth machinery
+over a Nat column -- seed_route), the BY-CONSTRUCTION assignment
+`seed_row(base, n) = [base+0 .. base+n-1]` (seed_row_nth), and seed
+DISTINCTNESS as ADD-INJECTIVITY (seed_distinct: is_ne(base+i, base+j)
+for i < j -- the delay_injective analog; no column hypothesis needed, the
+construction IS the disjointness argument).  Reproducibility is pinned
+honestly (seed_deterministic): determinism comes from purity; the law
+pins that the seed ROUTING is what a rerun reproduces (both reads land on
+the same reference element).  A general (e.g. JSON-supplied) seed column
+is still guarded: sweep_seed_ok = width /\ DISTINCTNESS fold
+(seeds_unique, the ok_no_clash pattern) /\ R.ok, with
+seeds_distinct_nth the per-index form and bad/bad_seed.bend rejecting a
+duplicate pair.  Capstone `sweep_seeded_contract`: a validated seeded
+sweep routes per sim i the params (row i), the seed (column element i),
+AND the fan coverage (lane i's output is run i) -- the pair-equality
+bundle shape.
+
 P4. CVAR NAME-RESOLUTION. Provable as an association-list lookup law:
 the model description is a key-val list (names <-> indices); the law:
 lookup(name, model_vars) == the index the projection carries, plus the

@@ -194,3 +194,115 @@ law mc_contract:
    ==
    (True{}, True{}, True{})
    : Bool & (Bool & Bool)}
+
+# --------------------------------------------------------------------------
+# P3a -- the PER-LANE SCHEME layer (SWEEP_LAWS_DESIGN.md, priority P3):
+# the config gains a per-lane SCHEME id -- which integrator each subnet
+# runs.  The scheme table is a `List<&2, Nat>` whose length is the number
+# of available schemes; the per-lane assignment rides alongside shapes
+# (the representation choice is documented in mconfig.bend).  The law
+# family mirrors mc_ok's own: the per-lane bounds fold + its per-index
+# form (the mc_src_nth pattern), the validator's and-elimination family,
+# the routing law (lane i runs the table entry its id points at -- for
+# the pinned identity assignment, lane i runs scheme i), and the
+# instance pins.
+# --------------------------------------------------------------------------
+
+# the instance's scheme table: TWO schemes available (ids 0 and 1), and
+# the pinned 2-lane assignment: lane 0 -> scheme 0, lane 1 -> scheme 1
+# (the identity assignment -- lane i runs scheme i).
+def SCHEME_TABLE() -> List<&2, Nat>:
+  0n <> 1n <> Nil{}
+
+def SCHEME_IDS() -> List<&2, Nat>:
+  0n <> 1n <> Nil{}
+
+# the negative assignment: lane 1's id 2 indexes PAST the 2-entry table --
+# exactly the out-of-range integrator id the validator exists to catch.
+def BAD_SCHEMES() -> List<&2, Nat>:
+  0n <> 2n <> Nil{}
+
+# the positive pin: the demo's heterogeneous network with the identity
+# scheme assignment is ACCEPTED -- one id per lane, both ids inside the
+# 2-entry table, the base mc_ok green.
+law scheme_ok_good:
+  {M.scheme_ok(SCHEME_TABLE(), SCHEME_IDS(), GOOD_SHAPES(), GOOD_MPS(),
+               GOOD_C()) == True{} : Bool}
+
+# the negative pin: lane 1's scheme id 2 is past the table -- REJECTED.
+law scheme_ok_bad:
+  {M.scheme_ok(SCHEME_TABLE(), BAD_SCHEMES(), GOOD_SHAPES(), GOOD_MPS(),
+               GOOD_C()) == False{} : Bool}
+
+# --------------------------------------------------------------------------
+# the inversion family (the section-6 and-elim pattern): scheme_ok ==
+# True decomposes into its three conjuncts.
+# --------------------------------------------------------------------------
+
+# (a) one scheme id per lane
+law scheme_ok_len:
+  for +table: List<&2, Nat>
+  for +schemes: List<&2, Nat>
+  for +shapes: List<&2, Nat>
+  for +mps: List<&2, M.MProj>
+  for +c: R.Config
+  for +h: {M.scheme_ok(table, schemes, shapes, mps, c) == True{} : Bool}
+  {Nat.is_eq(R.nats_len(schemes), R.nats_len(R.cfg_lanes(c))) == True{} : Bool}
+
+# (b) the bounds fold: every lane's scheme id is inside the table
+law scheme_ok_bounds:
+  for +table: List<&2, Nat>
+  for +schemes: List<&2, Nat>
+  for +shapes: List<&2, Nat>
+  for +mps: List<&2, M.MProj>
+  for +c: R.Config
+  for +h: {M.scheme_ok(table, schemes, shapes, mps, c) == True{} : Bool}
+  {M.schemes_ok(schemes, R.nats_len(table)) == True{} : Bool}
+
+# (c) the base gate: the heterogeneous layer's own validator
+law scheme_ok_base:
+  for +table: List<&2, Nat>
+  for +schemes: List<&2, Nat>
+  for +shapes: List<&2, Nat>
+  for +mps: List<&2, M.MProj>
+  for +c: R.Config
+  for +h: {M.scheme_ok(table, schemes, shapes, mps, c) == True{} : Bool}
+  {M.mc_ok(shapes, mps, c) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# the per-lane bounds, BY INDEX (the mc_src_nth pattern): every lane's
+# scheme id is inside the scheme table -- not just true of the fold, but
+# of every reachable lane.  The bounds witness is load-bearing: past the
+# assignment list the read defaults to 0n and the claim would overreach.
+# --------------------------------------------------------------------------
+
+law scheme_bounded:
+  for +schemes: List<&2, Nat>
+  for +ntab: Nat
+  for i: Nat
+  for h: R.lt_ok(i, R.nats_len(schemes))
+  for hok: {M.schemes_ok(schemes, ntab) == True{} : Bool}
+  {Nat.is_lt(R.nats_nth(schemes, i), ntab) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# the routing law: lane i's RESOLVED scheme is the table entry its id
+# points at.  When lane i's id IS i (the identity assignment -- the shape
+# the instance pins), lane i runs scheme-table entry i: lane i runs
+# scheme i.
+# --------------------------------------------------------------------------
+
+law scheme_nth:
+  for +table: List<&2, Nat>
+  for +schemes: List<&2, Nat>
+  for +i: Nat
+  for +hid: {M.lane_scheme(schemes, i) == i : Nat}
+  {M.scheme_of(table, schemes, i) == R.nats_nth(table, i) : Nat}
+
+# the instance pins: for the pinned 2-lane identity assignment, lane 0
+# runs scheme-table entry 0 and lane 1 runs entry 1 -- literal
+# computation (the csr_row_good convention).
+law scheme_nth_inst_0:
+  {M.scheme_of(SCHEME_TABLE(), SCHEME_IDS(), 0n) == 0n : Nat}
+
+law scheme_nth_inst_1:
+  {M.scheme_of(SCHEME_TABLE(), SCHEME_IDS(), 1n) == 1n : Nat}

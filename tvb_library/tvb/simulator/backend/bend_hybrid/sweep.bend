@@ -512,3 +512,96 @@ def sweep_csr_ok(+indptr: List<&2, Nat>, +ixs: List<&2, Nat>,
   Bool.and(cs_rows_csr_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c),
                           indptr, ixs, pays),
            R.ok(c))))
+
+# --------------------------------------------------------------------------
+# P3b -- the STOCHASTIC SEED column (SWEEP_LAWS_DESIGN.md, priority P3):
+# sim i's noise stream is seeded by the seed column's element i.
+#
+# The column is a `List<&2, Nat>` -- the sweep_nth machinery over a Nat
+# column (seed_nth the recursive read, seed_ref the drop+head reference;
+# seed_route pins the agreement, which is what rules out an off-by-one in
+# the seed read).
+#
+# DESIGN CHOICE (the distinctness story, decided): the by-construction
+# assignment.  The fan's seeds are seed_row(base, n) = [base+0 .. base+n-1]
+# -- the seed column the engine BUILDS, not one it is handed -- so two
+# distinct sims never share a seed is ADD-INJECTIVITY (seed_distinct:
+# is_ne(base+i, base+j) for i < j), a small arithmetic law, with no
+# column hypothesis needed.  A general (e.g. JSON-supplied) seed column is
+# still covered: sweep_seed_ok carries a DISTINCTNESS fold (seeds_unique,
+# the router's writes_unique/ok_no_clash pattern) that rejects a duplicate
+# pair at load time (bad/bad_seed.bend), and seeds_distinct_nth pins the
+# per-index form.
+
+# sim i's seed: element i of the seed column.  Past the end: 0n (the
+# sweep_nth default-read convention; route through the validator's width
+# bound to stay in bounds).
+def seed_nth(xs: List<&2, Nat>, k: Nat) -> Nat:
+  match xs k:
+    case Nil{} _:
+      0n
+    case h <> t 0n:
+      h
+    case h <> t 1n+p:
+      seed_nth(t, p)
+
+# the reference seed read, built the offset way: drop k elements, take the
+# head.  An INDEPENDENT implementation of the same read -- seed_route pins
+# the agreement (the sweep_nth_route pattern over a Nat column).
+def seeds_drop(xs: List<&2, Nat>, k: Nat) -> List<&2, Nat>:
+  match xs k:
+    case Nil{} _:
+      Nil{}
+    case h <> t 0n:
+      h <> t
+    case h <> t 1n+p:
+      seeds_drop(t, p)
+
+def seeds_head_or(xs: List<&2, Nat>, +d: Nat) -> Nat:
+  match xs:
+    case Nil{}:
+      d
+    case h <> t:
+      h
+
+def seed_ref(xs: List<&2, Nat>, k: Nat) -> Nat:
+  seeds_head_or(seeds_drop(xs, k), 0n)
+
+# the BY-CONSTRUCTION seed assignment: n seeds, seed i IS base + i -- the
+# counted-loop builder (the cols_rows_go convention: the shrinking counter
+# k leads, the sim index j rides).
+def seed_row_go(+base: Nat, k: Nat, +j: Nat) -> List<&2, Nat>:
+  match k:
+    case 0n:
+      Nil{}
+    case 1n+p:
+      Nat.add(base, j) <> seed_row_go(base, p, 1n+j)
+
+def seed_row(+base: Nat, +n: Nat) -> List<&2, Nat>:
+  seed_row_go(base, n, 0n)
+
+# the distinctness machinery for a GENERAL seed column (the router's
+# writes_unique / ok_no_clash pattern over Nats): s clashes with no later
+# element, and the pairwise fold.
+def no_seed_clash(+s: Nat, ts: List<&2, Nat>) -> Bool:
+  match ts:
+    case Nil{}:
+      True{}
+    case h <> +t:
+      Bool.and(Nat.is_ne(s, h), no_seed_clash(s, t))
+
+def seeds_unique(seeds: List<&2, Nat>) -> Bool:
+  match seeds:
+    case Nil{}:
+      True{}
+    case h <> +t:
+      Bool.and(no_seed_clash(h, t), seeds_unique(t))
+
+# THE SEED VALIDATOR: (a) the WIDTH bound -- the seed column fits the
+# fixed 8-wide fan (one seed per sim, the same silent-drop gate as the
+# parameter table); (b) the DISTINCTNESS fold -- a duplicate seed pair
+# would alias two sims' noise streams onto one stream (the silent-
+# correlation mode); (c) the SHARED CONFIG's R.ok, unchanged.
+def sweep_seed_ok(+seeds: List<&2, Nat>, +c: R.Config) -> Bool:
+  Bool.and(Nat.is_le(R.nats_len(seeds), 8n),
+           Bool.and(seeds_unique(seeds), R.ok(c)))

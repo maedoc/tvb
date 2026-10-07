@@ -624,3 +624,171 @@ law sweep_csr_contract:
    ==
    (S.pay_ref(pays, i), True{}, True{})
    : S.CsrPay & (Bool & Bool)}
+
+# --------------------------------------------------------------------------
+# P3b -- the STOCHASTIC SEEDS (SWEEP_LAWS_DESIGN.md, priority P3): sim i's
+# noise stream is seeded by the seed column's element i.
+#
+# DESIGN CHOICE (documented in sweep.bend): the by-construction assignment
+# -- the fan's seeds are seed_row(base, n) = [base+0 .. base+n-1], the
+# column the engine BUILDS -- so distinctness is ADD-INJECTIVITY
+# (seed_distinct), not a column hypothesis.  A general (e.g. JSON-supplied)
+# seed column is still validated: sweep_seed_ok's distinctness fold
+# (seeds_unique, the router's writes_unique/ok_no_clash pattern) rejects a
+# duplicate pair at load time (bad/bad_seed.bend), and seeds_distinct_nth
+# pins the per-index form.
+# --------------------------------------------------------------------------
+
+# the read lands on the head: no off-by-one at the base
+law seed_nth_head:
+  for +h: Nat
+  for +t: List<&2, Nat>
+  {S.seed_nth(h <> t, 0n) == h : Nat}
+
+# the stride is exactly one sim per seed
+law seed_nth_step:
+  for +h: Nat
+  for +t: List<&2, Nat>
+  for k: Nat
+  {S.seed_nth(h <> t, 1n+k) == S.seed_nth(t, k) : Nat}
+
+# the seed routing law: the recursive read and the drop+head reference read
+# agree, bounded by the witness lt_ok(i, |seeds|) -- sim i's seed IS seed
+# column element i; past the end the claim is UNSTATABLE (the witness
+# cannot be fabricated).
+law seed_route:
+  for +seeds: List<&2, Nat>
+  for i: Nat
+  for h: R.lt_ok(i, R.nats_len(seeds))
+  {S.seed_nth(seeds, i) == S.seed_ref(seeds, i) : Nat}
+
+# the instance pins (the sweep_route_inst convention): a literal 3-sim
+# seed column routes sims 0, 1, 2 to their own seeds.
+law seed_route_inst_0:
+  {S.seed_nth(100n <> 200n <> 300n <> Nil{}, 0n) == 100n : Nat}
+
+law seed_route_inst_1:
+  {S.seed_nth(100n <> 200n <> 300n <> Nil{}, 1n) == 200n : Nat}
+
+law seed_route_inst_2:
+  {S.seed_nth(100n <> 200n <> 300n <> Nil{}, 2n) == 300n : Nat}
+
+# the BY-CONSTRUCTION assignment: the built seed column's element i IS
+# base + i -- the construction the distinctness claim rides on
+# (seed_row(base, n) = [base+0 .. base+n-1]).
+law seed_row_nth:
+  for +base: Nat
+  for n: Nat
+  for i: Nat
+  for h: R.lt_ok(i, n)
+  {S.seed_nth(S.seed_row(base, n), i) == Nat.add(base, i) : Nat}
+
+# SEED DISTINCTNESS, by construction: two DISTINCT sims never share a
+# seed.  For the built column this is add-injectivity -- base + i and
+# base + j differ whenever i < j (the delay_injective analog over the
+# increment instead of the saturating sub).  No column hypothesis: the
+# construction IS the disjointness argument.
+law seed_distinct:
+  for +base: Nat
+  for i: Nat
+  for j: Nat
+  for +h: {Nat.is_lt(i, j) == True{} : Bool}
+  {Nat.is_ne(Nat.add(base, i), Nat.add(base, j)) == True{} : Bool}
+
+# THE REPRODUCIBILITY CLAIM: the seed routing is a PURE function of the
+# column -- a rerun of the same sweep routes the same seed to the same
+# sim.  Determinism itself comes from purity (a Bend function evaluates
+# the same way on every call; the fan consumes the column, never mutates
+# it); what the law PINS is the routing: both the fan's read AND a
+# rerun's read land on the same reference element, so the seed sim i runs
+# with is a function of the validated column alone.
+law seed_deterministic:
+  for +seeds: List<&2, Nat>
+  for +i: Nat
+  for +hib: {Nat.is_le(Nat.add(i, 1n), R.nats_len(seeds)) == True{} : Bool}
+  {(S.seed_nth(seeds, i), S.seed_nth(seeds, i))
+     == (S.seed_ref(seeds, i), S.seed_ref(seeds, i))
+   : Nat & Nat}
+
+# --------------------------------------------------------------------------
+# the seed validator (sweep_ok's seed half): width /\ distinct /\ R.ok.
+# The three and-elimination halves:
+# --------------------------------------------------------------------------
+
+law sweep_seed_ok_width:
+  for +seeds: List<&2, Nat>
+  for +c: R.Config
+  for +h: {S.sweep_seed_ok(seeds, c) == True{} : Bool}
+  {Nat.is_le(R.nats_len(seeds), 8n) == True{} : Bool}
+
+law sweep_seed_ok_distinct:
+  for +seeds: List<&2, Nat>
+  for +c: R.Config
+  for +h: {S.sweep_seed_ok(seeds, c) == True{} : Bool}
+  {S.seeds_unique(seeds) == True{} : Bool}
+
+law sweep_seed_ok_cfg:
+  for +seeds: List<&2, Nat>
+  for +c: R.Config
+  for +h: {S.sweep_seed_ok(seeds, c) == True{} : Bool}
+  {R.ok(c) == True{} : Bool}
+
+# the positive validator pin (instance laws are load-bearing): the literal
+# 2-sim seed column [100, 200] PASSES -- width 2 <= 8, the pair distinct,
+# the shared config ok (the P2 connectome sweep's CS_CONFIG).
+# the literal seed column the validator pins run against (the
+# csr_row_good convention: named defs, one reading)
+def SEEDS() -> List<&2, Nat>:
+  100n <> 200n <> Nil{}
+
+law sweep_seed_ok_instance:
+  {S.sweep_seed_ok(SEEDS(), CS_CONFIG()) == True{} : Bool}
+
+# the duplicate pin: the distinctness fold REJECTS a repeated seed --
+# exactly what the validator exists to catch (two sims aliased onto one
+# noise stream).
+law seeds_unique_dup:
+  {S.seeds_unique(100n <> 100n <> Nil{}) == False{} : Bool}
+
+# the per-index distinctness law (the ok_no_clash pattern): two distinct
+# positions of a seed column with the distinctness fold hold DISTINCT
+# seeds -- the general-column form of seed_distinct, validator-conditioned
+# instead of by-construction.
+law seeds_distinct_nth:
+  for +seeds: List<&2, Nat>
+  for ia: Nat
+  for ib: Nat
+  for +hltb: {Nat.is_lt(ia, ib) == True{} : Bool}
+  for ha: R.lt_ok(ia, R.nats_len(seeds))
+  for hb: R.lt_ok(ib, R.nats_len(seeds))
+  for +hu: {S.seeds_unique(seeds) == True{} : Bool}
+  {Nat.is_ne(R.nats_nth(seeds, ia), R.nats_nth(seeds, ib)) == True{} : Bool}
+
+# THE SEEDED-SWEEP CONTRACT -- the composition capstone (the
+# sweep_csr_contract pattern): a VALIDATED seeded sweep, at any in-bounds
+# sim i, routes ALL THREE per-sim inputs at once:
+#   (a) PARAMS IN: the parameter reaching sim i IS table row i;
+#   (b) SEED IN: the seed reaching sim i IS seed column element i;
+#   (c) FAN COVERAGE: lane i's output IS run i in the fixed 8-wide fan.
+# The three halves are heterogeneous (F32 / Nat / String), so the
+# Type-level conjunction is the right-nested pair equality.  The width
+# witness for (c) is DERIVED from the parameter validator
+# (sweep_ok_width); the two index witnesses are carried in Bool form
+# (each feeds TWO consumers: the param read and the fan, so a Type-valued
+# witness cannot be duplicated -- the mc_contract idiom).
+law sweep_seeded_contract:
+  for +t: List<&2, F32>
+  for +seeds: List<&2, Nat>
+  for +c: R.Config
+  for +runs: List<&2, String>
+  for +i: Nat
+  for +h: {S.sweep_ok(t, c) == True{} : Bool}
+  for +hs: {S.sweep_seed_ok(seeds, c) == True{} : Bool}
+  for +hkB: {Nat.is_le(Nat.add(i, 1n), S.sweep_len(t)) == True{} : Bool}
+  for +hsB: {Nat.is_le(Nat.add(i, 1n), R.nats_len(seeds)) == True{} : Bool}
+  {(S.sweep_nth(t, i),
+    S.seed_nth(seeds, i),
+    S.str_nth(S.fan8(S.sweep_len(t), runs), i))
+   ==
+   (S.sweep_word(t, i), S.seed_ref(seeds, i), S.str_nth(runs, i))
+   : F32 & (Nat & String)}

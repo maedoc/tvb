@@ -151,3 +151,52 @@ def mc_ok(+shapes: List<&2, Nat>, +mps: List<&2, MProj>, +c: R.Config) -> Bool:
   Bool.and(mprojs_src_ok(shapes, mps),
   Bool.and(mprojs_tgt_ok(shapes, mps),
            R.ok(c))))
+
+# --------------------------------------------------------------------------
+# the per-lane SCHEME layer (SWEEP_LAWS_DESIGN.md, priority P3a): the
+# config gains a per-lane SCHEME id -- WHICH INTEGRATOR each subnet runs.
+#
+# REPRESENTATION (the mconfig pattern, minimal): a PARALLEL list `schemes:
+# List<&2, Nat>` keyed by lane, riding alongside shapes (the same
+# parallel-list shape as mview's svs/tvs), plus the SCHEME TABLE -- a
+# `List<&2, Nat>` whose length is the number of available schemes (the
+# integrator itself is outside this layer's vocabulary; the table's length
+# is the bound the validator enforces).  Defaults follow the nats_nth
+# convention (0n past the end), but out-of-range reads are UNCALLABLE
+# through scheme_ok: the length conjunct rejects a short list, the bounds
+# conjunct rejects an id past the table.
+
+# the per-lane bounds fold: every lane's scheme id is inside the scheme
+# table (one is_lt per lane, the nats_lt_all / mprojs_src_ok fold shape)
+def schemes_ok(+schemes: List<&2, Nat>, +ntab: Nat) -> Bool:
+  match schemes:
+    case Nil{}:
+      True{}
+    case h <> t:
+      Bool.and(Nat.is_lt(h, ntab), schemes_ok(t, ntab))
+
+# lane i's scheme id: entry i of the per-lane list (the nats_nth
+# convention)
+def lane_scheme(+schemes: List<&2, Nat>, +i: Nat) -> Nat:
+  R.nats_nth(schemes, i)
+
+# lane i's RESOLVED scheme: the table entry its id points at -- the
+# routing the engine performs (lane i runs scheme schemes[i])
+def scheme_of(+table: List<&2, Nat>, +schemes: List<&2, Nat>, +i: Nat) -> Nat:
+  R.nats_nth(table, R.nats_nth(schemes, i))
+
+# THE SCHEME VALIDATOR: mc_ok extended by the scheme dimension, three
+# flat conjuncts:
+#   (a) one scheme id per lane (the shape list's conjunct, one level
+#       over: a short scheme list would silently default its missing
+#       lanes to scheme 0);
+#   (b) every id inside the table (the schemes_ok fold -- an
+#       out-of-range id indexes past the integrator table);
+#   (c) the base mc_ok -- the heterogeneous layer GATES on everything
+#       below it, never re-states a rule.
+def scheme_ok(+table: List<&2, Nat>, +schemes: List<&2, Nat>,
+              +shapes: List<&2, Nat>, +mps: List<&2, MProj>,
+              +c: R.Config) -> Bool:
+  Bool.and(Nat.is_eq(R.nats_len(schemes), R.nats_len(R.cfg_lanes(c))),
+  Bool.and(schemes_ok(schemes, R.nats_len(table)),
+           mc_ok(shapes, mps, c)))

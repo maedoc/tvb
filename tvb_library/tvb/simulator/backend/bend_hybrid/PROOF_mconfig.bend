@@ -261,3 +261,80 @@ def Laws.mc_contract(shapes, svs, tvs, c, t, i, h, hib):
                  z => (True{}, True{}, z),
                  S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), t, i),
                  True{}, hroute)))
+
+# --------------------------------------------------------------------------
+# P3a -- the per-lane SCHEME layer: proofs
+# --------------------------------------------------------------------------
+# the instance pins: pure computation on the literal tables, assignment,
+# and config -- every conjunct computes on concrete input.
+def Laws.scheme_ok_good():
+  {==}
+
+def Laws.scheme_ok_bad():
+  {==}
+
+# the inversion family: scheme_ok == True decomposes into its three flat
+# conjuncts (is_eq-len /\ (bounds-fold /\ mc_ok)), one and_elim walk each
+# (the mc_ok_shape family's walk, one level shallower).
+def Laws.scheme_ok_len(table, schemes, shapes, mps, c, h):
+  PR.and_elim_l_go(Nat.is_eq(R.nats_len(schemes), R.nats_len(R.cfg_lanes(c))),
+                   Bool.and(M.schemes_ok(schemes, R.nats_len(table)),
+                            M.mc_ok(shapes, mps, c)),
+                   h)
+
+def Laws.scheme_ok_bounds(table, schemes, shapes, mps, c, h):
+  PR.and_elim_l_go(M.schemes_ok(schemes, R.nats_len(table)),
+                   M.mc_ok(shapes, mps, c),
+                   PR.and_elim_r_go(Nat.is_eq(R.nats_len(schemes),
+                                              R.nats_len(R.cfg_lanes(c))),
+                                    Bool.and(M.schemes_ok(schemes,
+                                                          R.nats_len(table)),
+                                             M.mc_ok(shapes, mps, c)),
+                                    h))
+
+def Laws.scheme_ok_base(table, schemes, shapes, mps, c, h):
+  PR.and_elim_r_go(M.schemes_ok(schemes, R.nats_len(table)),
+                   M.mc_ok(shapes, mps, c),
+                   PR.and_elim_r_go(Nat.is_eq(R.nats_len(schemes),
+                                              R.nats_len(R.cfg_lanes(c))),
+                                    Bool.and(M.schemes_ok(schemes,
+                                                          R.nats_len(table)),
+                                             M.mc_ok(shapes, mps, c)),
+                                    h))
+
+# scheme_bounded: induction on the assignment list, peeling the lane
+# index.  The Nil case is absurd (i < 0, through PR.lt_ok_nil_absurd);
+# the head case is the fold's head conjunct (nats_nth(s0 <> t, 0n)
+# reduces to s0); the succ case recurses into the tail with the tail
+# conjunct, the peeled witness passing straight through.
+def scheme_bounded_go(schemes: List<&2, Nat>, +ntab: Nat, i: Nat,
+                      h: R.lt_ok(i, R.nats_len(schemes)),
+                      hok: {M.schemes_ok(schemes, ntab) == True{} : Bool})
+    -> {Nat.is_lt(R.nats_nth(schemes, i), ntab) == True{} : Bool}:
+  match schemes i h:
+    case Nil{} _ hlt:
+      Empty.absurd({Nat.is_lt(R.nats_nth(Nil{}, i), ntab) == True{} : Bool},
+                   PR.lt_ok_nil_absurd(i, hlt))
+    case s0 <> +t 0n _:
+      PR.and_elim_l_go(Nat.is_lt(s0, ntab), M.schemes_ok(t, ntab), hok)
+    case s0 <> +t 1n+q hlt:
+      scheme_bounded_go(t, ntab, q, hlt,
+                        PR.and_elim_r_go(Nat.is_lt(s0, ntab),
+                                         M.schemes_ok(t, ntab), hok))
+
+def Laws.scheme_bounded(schemes, ntab, i, h, hok):
+  scheme_bounded_go(schemes, ntab, i, h, hok)
+
+# scheme_nth: the resolved scheme reads the table THROUGH the lane's id
+# -- a congruence under nats_nth(table, ·) along the id hypothesis.
+def Laws.scheme_nth(table, schemes, i, hid):
+  Equal.cong(Nat, Nat, x => R.nats_nth(table, x),
+             M.lane_scheme(schemes, i), i, hid)
+
+# the instance pins: pure computation on the literal identity assignment
+# -- lane 0's read lands on table entry 0, lane 1's on entry 1.
+def Laws.scheme_nth_inst_0():
+  {==}
+
+def Laws.scheme_nth_inst_1():
+  {==}
