@@ -24,6 +24,7 @@
 
 import Base
 import ./router.bend as R
+import ./sweep.bend as S
 
 # --------------------------------------------------------------------------
 # char classification (runtime only -- U32 primitives do not reduce on
@@ -404,3 +405,185 @@ def bumps_fresh(+ls: List<&2, R.Lane>, ps: List<&2, R.Proj>, +e: Nat) -> Bool:
     case +h <> t:
       Bool.and(line_fresh(ls, route_bump(ls, h, e), R.proj_src(h)),
                bumps_fresh(ls, t, e))
+
+# --------------------------------------------------------------------------
+# the SWEEP ingress: the Monte-Carlo parameter table as JSON
+# --------------------------------------------------------------------------
+# Schema (the TVB sweep API's orientation, COLUMNS -- see
+# SWEEP_LAWS_DESIGN.md "Refresh 2026-10-05": the API is
+# backend.sweep(params={"coupling_scale": [v0, ..]}) -- named keys, one
+# per-parameter value list):
+#   {"sweep_names":["coupling_scale",..],"sweep_cols":[[v0,v1,..],..]}
+# one name per swept parameter, one column per parameter: column j lists
+# parameter j's value for sim 0, sim 1, .. (the names are a string list,
+# the cols an array-of-arrays -- exactly the projs shape the config
+# parser already handles).  Sim i's row is ASSEMBLED from the columns:
+# element i of every column, in column order (S.col_row).  Keys in ANY
+# order; whitespace-tolerant; the same strict JSON subset as above.
+#
+# THE 1e6 INTEGER-SCALING CONVENTION: a JSON number is the value scaled
+# by 1e6 (the job-file format's convention -- Bend has no float
+# bit-reinterpretation, so the wire carries integers and the parser is
+# Nat-only).  sw_f32_of divides the scaled integer back into the F32 the
+# table spec consumes: 2000 decodes to 0.002.
+#
+# The decode is TOTAL (any string yields a JSw; any unexpected token
+# STOPS the scan and answers what was parsed so far -- garbage yields the
+# empty sweep), which is what lets json_sweep_contract (LAWS_sweep.bend)
+# quantify over ALL strings.
+
+# a decoded sweep: the parameter names and their value columns
+type JSw is Data:
+  JSw{names: List<&2, String>, cols: List<&2, List<&2, F32>>}
+
+def sw_names(+sw: JSw) -> List<&2, String>:
+  match sw:
+    case JSw{names, cols}:
+      names
+
+def sw_cols(+sw: JSw) -> List<&2, List<&2, F32>>:
+  match sw:
+    case JSw{names, cols}:
+      cols
+
+# the scaled integer's F32: value / 1e6 (the 1e6 convention above)
+def sw_f32_of(d: Nat) -> F32:
+  F32.div(F32.from_nat(d), 1000000.0)
+
+def strs_rev(xs: List<&2, String>, acc: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      acc
+    case h <> t:
+      strs_rev(t, h <> acc)
+
+# a column's scaled integers, converted AND put back in sim order (the
+# accumulator form of nats_rev: the values were accumulated prepended)
+def f32_rev(xs: List<&2, Nat>, acc: List<&2, F32>) -> List<&2, F32>:
+  match xs:
+    case Nil{}:
+      acc
+    case d <> t:
+      f32_rev(t, sw_f32_of(d) <> acc)
+
+def cols_rev(xs: List<&2, List<&2, F32>>, acc: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  match xs:
+    case Nil{}:
+      acc
+    case h <> t:
+      cols_rev(t, h <> acc)
+
+# "sweep_names" -> mode 1, "sweep_cols" -> mode 2, anything else -> junk
+# (the key_arr_mode pattern)
+def sw_key_mode(+key: String) -> Nat:
+  Bool.pick(Nat, String.eq(key, "sweep_names"), 1n,
+  Bool.pick(Nat, String.eq(key, "sweep_cols"), 2n, 9n))
+
+# the object parser: the obj_go pattern again -- ONE self-recursive state
+# machine over (tokens, mode), pure helpers that return DATA and never
+# call back.  Modes: 0 object level, 1 inside sweep_names, 2 inside
+# sweep_cols, 3 inside one column.  A closed key's value REPLACES whatever
+# that key held (last one wins, the jc_set_* semantics); any unexpected
+# token stops the scan.
+def sw_go(ts: List<&2, Tok>, m: Nat, nacc: List<&2, String>,
+         cacc: List<&2, Nat>, ccacc: List<&2, List<&2, F32>>, +sw: JSw) -> JSw:
+  match ts m:
+    case Nil{} _:
+      sw
+    case TBraceO{} <> t 0n:
+      sw_go(t, 0n, nacc, cacc, ccacc, sw)
+    case TComma{} <> t 0n:
+      sw_go(t, 0n, nacc, cacc, ccacc, sw)
+    case TBraceC{} <> t 0n:
+      sw
+    case TStr{+k2} <> TColon{} <> TBrackO{} <> t 0n:
+      sw_go(t, sw_key_mode(k2), Nil{}, Nil{}, Nil{}, sw)
+    case TStr{+k2} <> TColon{} <> TNum{val} <> t 0n:
+      sw_go(t, 9n, nacc, cacc, ccacc, sw)
+    case TStr{val} <> t 1n:
+      sw_go(t, 1n, val <> nacc, cacc, ccacc, sw)
+    case TComma{} <> t 1n:
+      sw_go(t, 1n, nacc, cacc, ccacc, sw)
+    case TBrackC{} <> t 1n:
+      sw_go(t, 0n, Nil{}, cacc, ccacc, JSw{strs_rev(nacc, Nil{}), sw_cols(sw)})
+    case TBrackO{} <> t 2n:
+      sw_go(t, 3n, nacc, Nil{}, ccacc, sw)
+    case TComma{} <> t 2n:
+      sw_go(t, 2n, nacc, cacc, ccacc, sw)
+    case TBrackC{} <> t 2n:
+      sw_go(t, 0n, nacc, cacc, Nil{}, JSw{sw_names(sw), cols_rev(ccacc, Nil{})})
+    case TNum{val} <> t 3n:
+      sw_go(t, 3n, nacc, val <> cacc, ccacc, sw)
+    case TComma{} <> t 3n:
+      sw_go(t, 3n, nacc, cacc, ccacc, sw)
+    case TBrackC{} <> t 3n:
+      sw_go(t, 2n, nacc, Nil{}, f32_rev(cacc, Nil{}) <> ccacc, sw)
+    case _ _:
+      sw
+
+def json_sweep_decode(s: String) -> JSw:
+  sw_go(tokens(s), 0n, Nil{}, Nil{}, Nil{}, JSw{Nil{}, Nil{}})
+
+# --------------------------------------------------------------------------
+# the sweep-ingress validator and the name->slot map
+# --------------------------------------------------------------------------
+
+def names_len(names: List<&2, String>) -> Nat:
+  match names:
+    case Nil{}:
+      0n
+    case h <> t:
+      1n+names_len(t)
+
+# every column has the FIRST column's length -- the ragged-column gate
+# (a short column's missing sims would assemble 0.0-default fields: the
+# silent-garbage-parameter mode this check rejects)
+def cols_same_len_go(+c0: List<&2, F32>, t: List<&2, List<&2, F32>>) -> Bool:
+  match t:
+    case Nil{}:
+      True{}
+    case c <> rest:
+      Bool.and(Nat.is_eq(S.sweep_len(c), S.sweep_len(c0)),
+               cols_same_len_go(c0, rest))
+
+def cols_same_len(cols: List<&2, List<&2, F32>>) -> Bool:
+  match cols:
+    case Nil{}:
+      True{}
+    case c0 <> t:
+      cols_same_len_go(c0, t)
+
+# the CONSISTENCY check: as many columns as names (every named parameter
+# has a column) and no ragged columns (every column lists the same sims)
+def sw_consistent(+names: List<&2, String>, +cols: List<&2, List<&2, F32>>) -> Bool:
+  Bool.and(Nat.is_eq(S.rows_len(cols), names_len(names)),
+           cols_same_len(cols))
+
+# THE SWEEP-INGRESS VALIDATOR: the conjunction the compiled binary gates
+# on (the json_good analog for the sweep table).  (a) names/cols
+# consistent; (b) S.sweep_rows_ok on the ASSEMBLED row table (S.cols_rows:
+# one assembled row per sim) -- the width bound (<= 8 lanes), the row
+# shape (every row carries exactly one field per NAME) and the shared
+# config's R.ok, exactly the row-table validator the sweep layer proves.
+def sw_valid(+sw: JSw, +c: R.Config) -> Bool:
+  Bool.and(sw_consistent(sw_names(sw), sw_cols(sw)),
+           S.sweep_rows_ok(S.cols_rows(sw_cols(sw)), names_len(sw_names(sw)), c))
+
+# --------------------------------------------------------------------------
+# the name->slot map: which config slot a named column PATCHES
+# --------------------------------------------------------------------------
+# The engine sweeps exactly one slot today -- the coupling scale -- so
+# the slot-name table is one entry: "coupling_scale" -> slot 0.  Unknown
+# names map to the junk slot 9 (they patch nothing).  The resolution goes
+# through the NAME at the column's position in the sweep_names list
+# (sw_name_slot in LAWS_sweep.bend pins it); the patch APPLICATION (slot
+# 0's value into the engine's coupling scale) is the remaining link --
+# R.Config carries no scale field, the slot index is the pinned
+# interface.
+def slot_of(+name: String) -> Nat:
+  Bool.pick(Nat, String.eq(name, "coupling_scale"), 0n, 9n)
+
+# the slot the k-th named column patches (S.str_nth: "" past the end, so
+# a past-the-end index is an unknown name and lands on the junk slot)
+def sw_slot(names: List<&2, String>, k: Nat) -> Nat:
+  slot_of(S.str_nth(names, k))

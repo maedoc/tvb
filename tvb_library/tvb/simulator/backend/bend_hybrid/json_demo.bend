@@ -11,6 +11,10 @@
 # then prints the runtime INSTANCES of the proven properties on this very
 # config:
 #
+#   sweep: names=N cols=M ns=K -- the total SWEEP ingress's decode of the
+#       same argv string (see json_ingest.bend's sweep schema): printed
+#       before the gate, so a rejected input's decode is still visible.
+#       garbage decodes to 0/0/0; proved total by json_sweep_garbage.
 #   plateau (d = 1+n+0 vs 1+n+9)  -- Laws.json_delay_plateau: both delays
 #       are past the whole history, so both reads are THE IC read.  True
 #       for every input string; proved, so a False here is impossible.
@@ -23,6 +27,7 @@
 
 import Base
 import ./router.bend as R
+import ./sweep.bend as S
 import ./json_ingest.bend as J
 
 def show_line(+l: R.Line) -> String:
@@ -94,17 +99,29 @@ def tick_loop(m: Nat, tk: R.Tick, +ps: List<&2, R.Proj>) -> IO(Unit):
         IO.print("tick: " ++ show_lines(lines, ""))
         tick_loop(p, R.tick(lanes, ps), ps)
 
-def report(+cfg: R.Config) -> IO(Unit):
+# the SWEEP decode line: what the total sweep ingress makes of this same
+# argv string -- names/cols counts and the decoded sim count (garbage
+# decodes to the empty sweep: 0/0/0).  Printed BEFORE the config gate so
+# a rejected input's decode is still visible.
+def sweep_line(+json: String) -> String:
+  +sw = J.json_sweep_decode(json)
+  "sweep: names=" ++ Nat.show(J.names_len(J.sw_names(sw)))
+    ++ " cols=" ++ Nat.show(S.rows_len(J.sw_cols(sw)))
+    ++ " ns=" ++ Nat.show(S.cols_ns(J.sw_cols(sw)))
+
+def report(+cfg: R.Config, +json: String) -> IO(Unit):
   do IO<Unit>:
+    IO.print(sweep_line(json))
     IO.print("ok=PASS lanes=" ++ show_nats(R.cfg_lanes(cfg)) ++ " projs=" ++ Nat.show(count_projs(R.cfg_projs(cfg))) ++ " horizon=" ++ Nat.show(R.cfg_horizon(cfg)))
     tick_loop(4n, R.tick(R.init_lanes(R.cfg_lanes(cfg)), R.cfg_projs(cfg)), R.cfg_projs(cfg))
 
 def show_gate(g: Bool, +json: String) -> IO(Unit):
   match g:
     case True{}:
-      report(J.json_decode(json))
+      report(J.json_decode(json), json)
     case _:
       do IO<Unit>:
+        IO.print(sweep_line(json))
         IO.print("REJECTED: bad JSON or R.ok == False")
 
 def run_json(+json: String) -> IO(Unit):

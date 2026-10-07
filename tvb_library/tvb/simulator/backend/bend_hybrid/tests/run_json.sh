@@ -53,7 +53,8 @@ run_case() {
 # 1. the multi-rate config, keys in order: every routed index pinned
 run_case "json: multi-rate (pinned ticks)" \
   '{"lanes":[1,2],"projs":[[0,1,1,0,0],[1,0,2,1,0]],"horizon":4}' \
-'ok=PASS lanes=1,2 projs=2 horizon=4
+'sweep: names=0 cols=0 ns=0
+ok=PASS lanes=1,2 projs=2 horizon=4
 tick:  | i0=0 i1=1 num=0/1 win=0 | i0=0 i1=0 num=1/2 win=1
 tick:  | i0=1 i1=2 num=0/1 win=0 | i0=0 i1=0 num=0/2 win=1
 tick:  | i0=2 i1=3 num=0/1 win=0 | i0=0 i1=0 num=1/2 win=1
@@ -65,7 +66,8 @@ fresh   (i1<=newest):       True'
 #    saturating read (every line is the IC read {0,0}) on an ACCEPTED config
 run_case "json: shuffled keys + over-history delay" \
   '{ "projs" : [ [ 0 , 1 , 50 , 0 , 0 ] ] , "horizon" : 64 , "lanes" : [ 2 , 3 ] }' \
-'ok=PASS lanes=2,3 projs=1 horizon=64
+'sweep: names=0 cols=0 ns=0
+ok=PASS lanes=2,3 projs=1 horizon=64
 tick:  | i0=0 i1=0 num=1/2 win=0
 tick:  | i0=0 i1=0 num=0/2 win=0
 tick:  | i0=0 i1=0 num=1/2 win=0
@@ -76,13 +78,22 @@ fresh   (i1<=newest):       True'
 # 3. garbage text: refused at parse
 run_case "json: garbage refused" \
   'not json at all!!!' \
-'REJECTED: bad JSON or R.ok == False'
+'sweep: names=0 cols=0 ns=0
+REJECTED: bad JSON or R.ok == False'
 
 # 4. structurally valid JSON, invalid config (zero-period lane): refused by
 #    R.ok -- the runtime gate the laws assume
 run_case "json: zero-period lane refused by ok" \
   '{"lanes":[0,2],"projs":[],"horizon":1}' \
-'REJECTED: bad JSON or R.ok == False'
+'sweep: names=0 cols=0 ns=0
+REJECTED: bad JSON or R.ok == False'
+
+# 5. a sweep table on argv: the total sweep decode is visible even though
+#    the string carries no config (no lanes key), so the gate refuses it
+run_case "json: sweep table decoded (then refused, no config)" \
+  '{"sweep_names":["coupling_scale"],"sweep_cols":[[2000,2100]]}' \
+'sweep: names=1 cols=1 ns=2
+REJECTED: bad JSON or R.ok == False'
 
 rm -f "$bin"
 [ "$fail" = 0 ] && echo "all green"

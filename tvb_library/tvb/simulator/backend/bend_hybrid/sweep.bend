@@ -328,6 +328,32 @@ def col_row(cols: List<&2, List<&2, F32>>, i: Nat) -> List<&2, F32>:
   col_row_go(cols, i)
 
 # --------------------------------------------------------------------------
+# the ASSEMBLED ROW TABLE (the JSON column ingress's table): one assembled
+# row per sim, sims 0 .. (first column's length) - 1 -- the table the JSON
+# sweep ingress validates (sweep_rows_ok) and the capstone routes
+# --------------------------------------------------------------------------
+
+# the column table's sim count: the first column's length (a consistent
+# table -- every column the same length, the ingress's sw_consistent --
+# has exactly this many sims; missing columns read empty, so 0 columns
+# give 0 sims)
+def cols_ns(cols: List<&2, List<&2, F32>>) -> Nat:
+  sweep_len(col_nth(cols, 0n))
+
+# the builder's spine: k counts the rows DOWN while i counts the sims UP
+# (the counted-loop convention: the shrinking argument leads)
+def cols_rows_go(+cols: List<&2, List<&2, F32>>, k: Nat, +i: Nat) -> List<&2, List<&2, F32>>:
+  match k:
+    case 0n:
+      Nil{}
+    case 1n+p:
+      col_row(cols, i) <> cols_rows_go(cols, p, 1n+i)
+
+# the assembled row table: row i IS col_row(cols, i) for i < cols_ns(cols)
+def cols_rows(+cols: List<&2, List<&2, F32>>) -> List<&2, List<&2, F32>>:
+  cols_rows_go(cols, cols_ns(cols), 0n)
+
+# --------------------------------------------------------------------------
 # the ROW-TABLE validator (sweep_ok's multi-param generalization)
 # --------------------------------------------------------------------------
 

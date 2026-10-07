@@ -12,6 +12,7 @@ import Base
 import ./LAWS_sweep.bend as Laws
 import ./sweep.bend as S
 import ./router.bend as R
+import ./json_ingest.bend as J
 import ./PROOF_router.bend as PR
 
 # False is not True: the motive sends True to Empty, so transporting along a
@@ -526,3 +527,125 @@ def Laws.sweep_rows_shape_nth(rows, wp, c, h, i, hi):
                            Bool.and(S.rows_shape_ok(rows, wp), R.ok(c)), h2)
   hshape = PR.and_elim_l_go(S.rows_shape_ok(rows, wp), R.ok(c), hrest)
   rows_shape_nth_go(i, rows, wp, hshape, hi)
+
+# --------------------------------------------------------------------------
+# the JSON SWEEP INGRESS
+# --------------------------------------------------------------------------
+# sw_cols_rows_len: induction on the builder's row counter k --
+# rows_len(peel one row) == 1 + rows_len(rest), and the induction
+# hypothesis equates the rest with p.
+def cols_rows_len_go(+cols: List<&2, List<&2, F32>>, k: Nat, +i: Nat)
+  -> {S.rows_len(S.cols_rows_go(cols, k, i)) == k : Nat}:
+  match k:
+    case 0n:
+      {==}
+    case 1n+p:
+      Equal.cong(Nat, Nat, z => 1n+z,
+                 S.rows_len(S.cols_rows_go(cols, p, 1n+i)), p,
+                 cols_rows_len_go(cols, p, 1n+i))
+
+def Laws.sw_cols_rows_len(cols):
+  cols_rows_len_go(cols, S.cols_ns(cols), 0n)
+
+# the instances: pure computation on literal text / literal tables -- the
+# tokenizer, the state machine, the 1e6 scaling and the validator all
+# compute on concrete input.
+def Laws.json_sweep_instance():
+  {==}
+
+def Laws.json_sweep_instance_shuffled():
+  {==}
+
+def Laws.json_sweep_garbage():
+  {==}
+
+def Laws.json_sweep_valid_instance():
+  {==}
+
+def Laws.json_sweep_valid_ragged():
+  {==}
+
+# the name->slot lookup: congruence under slot_of -- the k-th name IS the
+# literal (the hypothesis), and slot_of computes on the literal name.
+def Laws.sw_name_slot(names, k, h):
+  Equal.trans(Nat,
+    J.slot_of(S.str_nth(names, k)),
+    J.slot_of("coupling_scale"),
+    0n,
+    Equal.cong(String, Nat, w => J.slot_of(w), S.str_nth(names, k), "coupling_scale", h),
+    {==})
+
+def Laws.sw_name_slot_unknown(names, k, h):
+  Equal.trans(Nat,
+    J.slot_of(S.str_nth(names, k)),
+    J.slot_of("io_gain"),
+    9n,
+    Equal.cong(String, Nat, w => J.slot_of(w), S.str_nth(names, k), "io_gain", h),
+    {==})
+
+# THE CAPSTONE.  The validator hypothesis splits into the rows_ok half
+# (the consistency conjunct rides unused -- the fan and the routing claims
+# need only the width and the shared config's ok), the width conjunct
+# converts to the decoded sim count through sw_cols_rows_len, and the
+# three halves chain exactly like Laws.sweep_contract: col_to_row for the
+# param half, fan8_exact for the result half, the PR.routing_contract_at
+# bridge for the routing half.
+def Laws.json_sweep_contract(s, c, runs, tk, i, j, h, hi, hj):
+  +h2 = h
+  +d = J.json_sweep_decode(s)
+  +hrk = PR.and_elim_r_go(
+          J.sw_consistent(J.sw_names(d), J.sw_cols(d)),
+          S.sweep_rows_ok(S.cols_rows(J.sw_cols(d)), J.names_len(J.sw_names(d)), c),
+          h2)
+  hlenB = Laws.sweep_rows_ok_len(S.cols_rows(J.sw_cols(d)),
+                                 J.names_len(J.sw_names(d)), c, hrk)
+  c1 = Equal.cong(Nat, Bool, w => Nat.is_le(w, 8n),
+                  S.rows_len(S.cols_rows(J.sw_cols(d))),
+                  S.cols_ns(J.sw_cols(d)),
+                  Laws.sw_cols_rows_len(J.sw_cols(d)))
+  hnsB = Equal.trans(Bool,
+           Nat.is_le(S.cols_ns(J.sw_cols(d)), 8n),
+           Nat.is_le(S.rows_len(S.cols_rows(J.sw_cols(d))), 8n),
+           True{},
+           Equal.sym(Bool,
+             Nat.is_le(S.rows_len(S.cols_rows(J.sw_cols(d))), 8n),
+             Nat.is_le(S.cols_ns(J.sw_cols(d)), 8n), c1),
+           hlenB)
+  hw = PR.b_le(S.cols_ns(J.sw_cols(d)), 8n, hnsB)
+  hok = Laws.sweep_rows_ok_cfg(S.cols_rows(J.sw_cols(d)),
+                               J.names_len(J.sw_names(d)), c, hrk)
+  hcol = Laws.col_to_row(J.sw_cols(d), i, j)
+  hfan = Laws.fan8_exact(runs, S.cols_ns(J.sw_cols(d)), i, hw, hi)
+  hrun = PR.routing_contract_at(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c),
+                                tk, j, hok, {==}, {==}, hj)
+  Equal.trans(F32 & (String & Bool),
+    (S.sweep_nth(S.col_row(J.sw_cols(d), i), j),
+     S.str_nth(S.fan8(S.cols_ns(J.sw_cols(d)), runs), i),
+     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
+    (S.sweep_nth(S.col_nth(J.sw_cols(d), j), i),
+     S.str_nth(S.fan8(S.cols_ns(J.sw_cols(d)), runs), i),
+     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
+    (S.sweep_nth(S.col_nth(J.sw_cols(d), j), i), S.str_nth(runs, i), True{}),
+    Equal.cong(F32, F32 & (String & Bool),
+               w => (w,
+                     S.str_nth(S.fan8(S.cols_ns(J.sw_cols(d)), runs), i),
+                     S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
+               S.sweep_nth(S.col_row(J.sw_cols(d), i), j),
+               S.sweep_nth(S.col_nth(J.sw_cols(d), j), i), hcol),
+    Equal.trans(F32 & (String & Bool),
+      (S.sweep_nth(S.col_nth(J.sw_cols(d), j), i),
+       S.str_nth(S.fan8(S.cols_ns(J.sw_cols(d)), runs), i),
+       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
+      (S.sweep_nth(S.col_nth(J.sw_cols(d), j), i), S.str_nth(runs, i),
+       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
+      (S.sweep_nth(S.col_nth(J.sw_cols(d), j), i), S.str_nth(runs, i), True{}),
+      Equal.cong(String, F32 & (String & Bool),
+                 w => (S.sweep_nth(S.col_nth(J.sw_cols(d), j), i), w,
+                       S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j)),
+                 S.str_nth(S.fan8(S.cols_ns(J.sw_cols(d)), runs), i),
+                 S.str_nth(runs, i), hfan),
+      Equal.cong(Bool, F32 & (String & Bool),
+                 w => (S.sweep_nth(S.col_nth(J.sw_cols(d), j), i),
+                       S.str_nth(runs, i), w),
+                 S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j),
+                 True{}, hrun)))

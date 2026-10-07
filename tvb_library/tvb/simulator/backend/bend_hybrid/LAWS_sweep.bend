@@ -7,13 +7,13 @@
 # and the composition capstone (sweep_contract); Group 5's
 # parallel-vs-sequential claim is phase 1's fan_gather_order.
 #
-# REMAINING GAP -- the JSON sweep ingress: the schema is an open design
-# question (per-sim rows {"sims": [{..}, ..]} vs per-parameter columns
-# {"scale": [..], ..}); the table spec above is agnostic.  Once decided,
-# the ingress laws pin it with the json_ingest state-machine pattern
-# (total decode: garbage decodes to the empty sweep), the instance pins,
-# and a json_sweep_contract quantified over all strings (the
-# json_read_fresh analog) composing onto sweep_contract.
+# REMAINING GAP -- none in this family: the JSON sweep ingress landed
+# (section below): the schema is COLUMNS (SWEEP_LAWS_DESIGN.md "Refresh
+# 2026-10-05"), the total decode is J.json_sweep_decode, the instance
+# pins and the capstone are here, and the patch APPLICATION (slot 0's
+# value into the engine's coupling scale) is the one link left open --
+# R.Config carries no scale field, so sw_name_slot pins the name->slot
+# INDEX resolution only.
 #
 # Law style follows LAWS_router.bend: binders reused inside a law carry
 # `+` (Data only -- a function-typed binder cannot be `+`); witness-carrying
@@ -22,6 +22,7 @@
 import Base
 import ./sweep.bend as S
 import ./router.bend as R
+import ./json_ingest.bend as J
 
 # --------------------------------------------------------------------------
 # Group 1 -- the row routing: sim k's parameter IS table word k
@@ -346,3 +347,128 @@ law sweep_rows_shape_nth:
   for i: Nat
   for hi: R.lt_ok(i, S.rows_len(rows))
   {Nat.is_eq(S.sweep_len(S.sweep_row(rows, i)), wp) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# the JSON SWEEP INGRESS (SWEEP_LAWS_DESIGN.md's remaining gap, closed)
+# --------------------------------------------------------------------------
+# Schema (COLUMNS -- the TVB sweep API's orientation,
+# backend.sweep(params={"coupling_scale": [v0, ..]})):
+#   {"sweep_names":["coupling_scale"],"sweep_cols":[[2000,2100]]}
+# names as a string list, cols as array-of-arrays (the projs shape the
+# config parser already handles); a JSON number is the value SCALED BY
+# 1e6 (the job-file convention -- Bend has no float bit-reinterpretation;
+# J.sw_f32_of divides back into the F32 the table spec consumes).  The
+# decode J.json_sweep_decode is TOTAL: garbage decodes to the empty sweep.
+
+# the transcription pin (the csr_row_good / json_decode_instance
+# convention): the literal decode IS the intended table -- names in list
+# order, cols in list order, each column's values in sim order.
+law json_sweep_instance:
+  {J.json_sweep_decode("{\"sweep_names\":[\"coupling_scale\"],\"sweep_cols\":[[2000,2100]]}")
+     == J.JSw{"coupling_scale" <> Nil{},
+              (J.sw_f32_of(2000n) <> J.sw_f32_of(2100n) <> Nil{}) <> Nil{}}
+   : J.JSw}
+
+# keys in REVERSE order, whitespace, a second column: the same table --
+# key order does not matter (the json config ingress's property)
+law json_sweep_instance_shuffled:
+  {J.json_sweep_decode("{ \"sweep_cols\" : [ [ 2000 ] , [ 3000 ] ] , \"sweep_names\" : [ \"coupling_scale\" ] }")
+     == J.JSw{"coupling_scale" <> Nil{},
+              (J.sw_f32_of(2000n) <> Nil{}) <> (J.sw_f32_of(3000n) <> Nil{}) <> Nil{}}
+   : J.JSw}
+
+# garbage decodes to the empty sweep -- the total-decode pin
+law json_sweep_garbage:
+  {J.json_sweep_decode("zz not json") == J.JSw{Nil{}, Nil{}} : J.JSw}
+
+# the assembled row table's length IS the decoded sim count (the first
+# column's length) -- the bridge from the validator's width conjunct to
+# the fan the capstone's result half quantifies over
+law sw_cols_rows_len:
+  for +cols: List<&2, List<&2, F32>>
+  {S.rows_len(S.cols_rows(cols)) == S.cols_ns(cols) : Nat}
+
+# the ingress gate ACCEPTS a well-formed sweep against a good shared
+# config: one name, one column of two scaled values -- names/cols
+# consistent, two assembled rows (<= 8 lanes), one field per row, R.ok.
+# Stated over the literal DECODED table (the transcription decode is
+# pinned by json_sweep_instance; the BendTT kernel keeps F32 primitive
+# applications opaque, so an equation that must normalise THROUGH a
+# decoded column is outside --verdict's reach -- the t_rlen_dec probe).
+law json_sweep_valid_instance:
+  {J.sw_valid(J.JSw{"coupling_scale" <> Nil{},
+                    (J.sw_f32_of(1000000n) <> J.sw_f32_of(2000000n) <> Nil{}) <> Nil{}},
+              R.Config{1n <> 2n <> Nil{}, R.Proj{0n, 1n, 1n, 0n, 0n} <> Nil{}, 4n})
+     == True{} : Bool}
+
+# the ingress gate REJECTS ragged columns (a short column's missing sims
+# would assemble 0.0-default fields -- the silent-garbage-parameter mode)
+law json_sweep_valid_ragged:
+  {J.sw_valid(J.JSw{"a" <> "b" <> Nil{},
+                    (J.sw_f32_of(1000000n) <> J.sw_f32_of(2000000n) <> Nil{})
+                      <> (J.sw_f32_of(3000000n) <> Nil{}) <> Nil{}},
+              R.Config{1n <> 2n <> Nil{}, R.Proj{0n, 1n, 1n, 0n, 0n} <> Nil{}, 4n})
+     == False{} : Bool}
+
+# THE JSON SWEEP CONTRACT -- the ingress capstone (the json_read_fresh
+# analog, quantified over ALL strings): for every string s whose decoded
+# sweep PASSES the ingress validator (names/cols consistent, then
+# sweep_rows_ok on the assembled row table -- width <= 8 lanes, row
+# shape, shared config ok), the sweep contract's three halves hold per
+# in-bounds sim i and per projection j of the shared config:
+#   (a) PARAMS IN: sim i's field j IS column j's value i -- the assembled
+#       row routes the named columns (col_to_row instantiated at the
+#       decoded table);
+#   (b) RESULTS OUT: lane i's output IS run i in the fixed 8-wide fan
+#       (fan8_exact, the width witness derived from the validator through
+#       sw_cols_rows_len);
+#   (c) ROUTING CLEAN: the shared config's routing contract at
+#       projection j (the PR.routing_contract_at bridge, R.ok derived
+#       from the validator).
+# The triple is sweep_contract's pair-equality shape.  The flat-table
+# capstone's param half is the ONE-WORD read, so the multi-param table's
+# param half goes through col_to_row -- that composition is what this law
+# pins; (b) and (c) are sweep_contract's halves verbatim.
+law json_sweep_contract:
+  for +s: String
+  for +c: R.Config
+  for +runs: List<&2, String>
+  for +tk: Nat
+  for +i: Nat
+  for +j: Nat
+  for +h: {J.sw_valid(J.json_sweep_decode(s), c) == True{} : Bool}
+  for hi: R.lt_ok(i, S.cols_ns(J.sw_cols(J.json_sweep_decode(s))))
+  for hj: R.lt_ok(j, R.projs_len(R.cfg_projs(c)))
+  {(S.sweep_nth(S.col_row(J.sw_cols(J.json_sweep_decode(s)), i), j),
+    S.str_nth(S.fan8(S.cols_ns(J.sw_cols(J.json_sweep_decode(s))), runs), i),
+    S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j))
+   ==
+   (S.sweep_nth(S.col_nth(J.sw_cols(J.json_sweep_decode(s)), j), i),
+    S.str_nth(runs, i),
+    True{})
+   : F32 & (String & Bool)}
+
+# --------------------------------------------------------------------------
+# the name->slot field map
+# --------------------------------------------------------------------------
+
+# the lookup law (instance-pinned): a column NAMED "coupling_scale"
+# patches the coupling-scale slot (slot 0) -- the resolution goes through
+# the NAME at the column's position k in the sweep_names list, so the
+# patch follows the name, not the position.  The patch APPLICATION (slot
+# 0's value into the engine's coupling scale) is the remaining link:
+# R.Config carries no scale field, the slot index is the pinned interface.
+law sw_name_slot:
+  for +names: List<&2, String>
+  for k: Nat
+  for +h: {S.str_nth(names, k) == "coupling_scale" : String}
+  {J.sw_slot(names, k) == 0n : Nat}
+
+# the unknown-name arm: a name the slot table does not know lands on the
+# junk slot -- it patches nothing (and a past-the-end index reads "" and
+# lands there too)
+law sw_name_slot_unknown:
+  for +names: List<&2, String>
+  for k: Nat
+  for +h: {S.str_nth(names, k) == "io_gain" : String}
+  {J.sw_slot(names, k) == 9n : Nat}
