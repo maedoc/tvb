@@ -49,9 +49,11 @@ structures are, what the laws say, and how to check them.
 > [VALUE_LEVEL_EXPLAINER.md](VALUE_LEVEL_EXPLAINER.md) for what could be
 > proved about values, at what cost.
 
-Status: **175 laws** in `LAWS_router.bend`, **37** in `LAWS_sweep.bend`
-(the parameter sweep — general width and multi-parameter rows), **5** in
-`LAWS_json.bend`, **13** model-level in `LAWS.bend`, every one kernel-verified
+Status: **175 laws** in `LAWS_router.bend`, **64** in `LAWS_sweep.bend`
+(parameter, connectome and seed sweeps), **29** in `LAWS_mconfig.bend`
+(heterogeneous models: cvar bounds, schemes, name-resolution), **13** in
+`LAWS_mons.bend` (monitoring variety), **5** in `LAWS_json.bend`, **13**
+model-level in `LAWS.bend` — 299 total, every one kernel-verified
 (`bend PROOF_router.bend --verdict`), with 17 negative controls that the
 checker must *reject*. Everything is quantified: the JSON ingress decodes
 **any** string (garbage included), so a claim over `String` is a claim
@@ -380,10 +382,11 @@ never run); the gather puts sim 4's output in block 3; a malformed row
 reaches a sim unvalidated; the parallel execution order leaks into the
 results.
 
-**What the laws enforce** (37 laws, `LAWS_sweep.bend`, gate
+**What the laws enforce** (64 laws, `LAWS_sweep.bend`, gate
 `tests/run_sweep.sh`; the family generalizes to any fan width —
 `fan_exact` — and to multi-parameter rows — `sweep_row_nth`,
-`col_to_row` for the TVB named-key column orientation):
+`col_to_row` for the TVB named-key column orientation — plus connectome
+payloads and stochastic-seed routing):
 
 - **Row routing** (`sweep_nth_route`, pinned by the head and stride laws
   plus literal instances): the parameter reaching sim `i` is exactly table
@@ -443,6 +446,8 @@ cd tvb_library/tvb/simulator/backend/bend_hybrid
 bash tests/run_router.sh                 # 175 laws + 17 negatives + pinned tests
 bash tests/run_json.sh                   # ingress laws + compiled-binary JSON runs
 bash tests/run_sweep.sh                  # sweep laws + the width negative + sweep smoke
+bash tests/run_mconfig.sh                # model-heterogeneity laws + cvar negatives
+bash tests/run_mons.sh                   # monitoring-variety laws + rate negative
 ```
 
 The bend binary is `/home/duke/.bend/bin/bend` (v2.0.34). Both gates end
