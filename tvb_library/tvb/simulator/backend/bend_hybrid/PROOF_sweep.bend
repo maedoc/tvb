@@ -649,3 +649,234 @@ def Laws.json_sweep_contract(s, c, runs, tk, i, j, h, hi, hj):
                        S.str_nth(runs, i), w),
                  S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)), R.cfg_projs(c), tk, j),
                  True{}, hrun)))
+
+# --------------------------------------------------------------------------
+# P2 -- the CONNECTOME SWEEP (per-sim CSR payloads over a shared shape)
+# --------------------------------------------------------------------------
+# sweep_csr_route: the sweep_row_nth induction at the payload level --
+# peel one payload record per step; the witness refines with the peel;
+# the Nil cases are absurd through the witness.
+
+def pay_nth_route_go(i: Nat, pays: List<&2, S.CsrPay>,
+                     h: R.lt_ok(i, S.pays_len(pays)))
+  -> {S.pay_nth(pays, i) == S.pay_ref(pays, i) : S.CsrPay}:
+  match i pays h:
+    case 0n Nil{} hlt:
+      Empty.absurd({S.pay_nth(Nil{}, 0n) == S.pay_ref(Nil{}, 0n) : S.CsrPay}, hlt)
+    case 0n p0 <> t _:
+      {==}
+    case 1n+p Nil{} hlt:
+      Empty.absurd({S.pay_nth(Nil{}, 1n+p) == S.pay_ref(Nil{}, 1n+p) : S.CsrPay}, hlt)
+    case 1n+p p0 <> t hlt:
+      pay_nth_route_go(p, t, hlt)
+
+def Laws.sweep_csr_route(pays, i, h):
+  pay_nth_route_go(i, pays, h)
+
+# the instance pins: pure computation on the literal payload table.
+def Laws.sweep_csr_route_inst_0():
+  {==}
+
+def Laws.sweep_csr_route_inst_1():
+  {==}
+
+# sweep_csr_shape_shared: the rows_shape_nth induction at the payload
+# level -- peel one payload per step; the every-row hypothesis refines
+# in lockstep (the head's pay_shape_ok is the and-left of the fold, the
+# tail's fold is the and-right); the Nil cases are absurd through the
+# bounds witness.
+def cs_shape_nth_go(i: Nat, pays: List<&2, S.CsrPay>, +n: Nat,
+                    h: {S.cs_shape_ok(pays, n) == True{} : Bool},
+                    hi: R.lt_ok(i, S.pays_len(pays)))
+  -> {S.pay_shape_ok(S.pay_nth(pays, i), n) == True{} : Bool}:
+  match i pays h hi:
+    case 0n p0 <> t hst _:
+      PR.and_elim_l_go(S.pay_shape_ok(p0, n), S.cs_shape_ok(t, n), hst)
+    case 0n Nil{} hst hlt:
+      Empty.absurd({S.pay_shape_ok(S.pay_nth(Nil{}, 0n), n) == True{} : Bool}, hlt)
+    case 1n+p p0 <> +t hst hlt:
+      cs_shape_nth_go(p, t, n,
+                      PR.and_elim_r_go(S.pay_shape_ok(p0, n),
+                                       S.cs_shape_ok(t, n), hst), hlt)
+    case 1n+p Nil{} hst hlt:
+      Empty.absurd({S.pay_shape_ok(S.pay_nth(Nil{}, 1n+p), n) == True{} : Bool}, hlt)
+
+def Laws.sweep_csr_shape_shared(pays, ixs, h, i, hi):
+  cs_shape_nth_go(i, pays, R.nats_len(ixs), h, hi)
+
+# sweep_csr_valid_nth: the same induction over the PER-ROW csr_ok fold --
+# the head's R.csr_ok is the and-left, the tail's fold the and-right.
+def cs_valid_nth_go(i: Nat, pays: List<&2, S.CsrPay>,
+                    +nsrc: Nat, +horizon: Nat,
+                    +indptr: List<&2, Nat>, +ixs: List<&2, Nat>,
+                    h: {S.cs_rows_csr_ok(nsrc, horizon, indptr, ixs, pays)
+                          == True{} : Bool},
+                    hi: R.lt_ok(i, S.pays_len(pays)))
+  -> {R.csr_ok(nsrc, horizon, S.pay_csr(indptr, ixs, S.pay_nth(pays, i)))
+        == True{} : Bool}:
+  match i pays h hi:
+    case 0n p0 <> t hst _:
+      PR.and_elim_l_go(R.csr_ok(nsrc, horizon, S.pay_csr(indptr, ixs, p0)),
+                       S.cs_rows_csr_ok(nsrc, horizon, indptr, ixs, t), hst)
+    case 0n Nil{} hst hlt:
+      Empty.absurd({R.csr_ok(nsrc, horizon,
+                             S.pay_csr(indptr, ixs, S.pay_nth(Nil{}, 0n)))
+                      == True{} : Bool}, hlt)
+    case 1n+p p0 <> +t hst hlt:
+      cs_valid_nth_go(p, t, nsrc, horizon, indptr, ixs,
+                      PR.and_elim_r_go(R.csr_ok(nsrc, horizon,
+                                                S.pay_csr(indptr, ixs, p0)),
+                                       S.cs_rows_csr_ok(nsrc, horizon, indptr,
+                                                        ixs, t), hst), hlt)
+    case 1n+p Nil{} hst hlt:
+      Empty.absurd({R.csr_ok(nsrc, horizon,
+                             S.pay_csr(indptr, ixs, S.pay_nth(Nil{}, 1n+p)))
+                      == True{} : Bool}, hlt)
+
+# the fill: strip the width / shape conjuncts off the four-deep validator
+# and, then the fold induction at the derived (nsrc, horizon).
+def Laws.sweep_csr_valid_nth(indptr, ixs, pays, c, h, i, hi):
+  +h2 = h
+  hX = PR.and_elim_r_go(Nat.is_le(S.pays_len(pays), 8n),
+                        Bool.and(S.cs_shape_ok(pays, R.nats_len(ixs)),
+                                 Bool.and(S.cs_rows_csr_ok(
+                                            R.nats_len(R.cfg_lanes(c)),
+                                            R.cfg_horizon(c), indptr, ixs, pays),
+                                          R.ok(c))),
+                        h2)
+  hY = PR.and_elim_r_go(S.cs_shape_ok(pays, R.nats_len(ixs)),
+                        Bool.and(S.cs_rows_csr_ok(R.nats_len(R.cfg_lanes(c)),
+                                                  R.cfg_horizon(c), indptr,
+                                                  ixs, pays),
+                                 R.ok(c)),
+                        hX)
+  hCR = PR.and_elim_l_go(S.cs_rows_csr_ok(R.nats_len(R.cfg_lanes(c)),
+                                          R.cfg_horizon(c), indptr, ixs, pays),
+                         R.ok(c), hY)
+  cs_valid_nth_go(i, pays, R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c),
+                  indptr, ixs, hCR, hi)
+
+# the and-elimination family: width, shape, csr_ok-fold, shared-config ok,
+# each peeling one layer off the nested and (the sweep_rows_ok pattern).
+def Laws.sweep_csr_ok_width(indptr, ixs, pays, c, h):
+  PR.and_elim_l_go(Nat.is_le(S.pays_len(pays), 8n),
+                   Bool.and(S.cs_shape_ok(pays, R.nats_len(ixs)),
+                            Bool.and(S.cs_rows_csr_ok(R.nats_len(R.cfg_lanes(c)),
+                                                      R.cfg_horizon(c),
+                                                      indptr, ixs, pays),
+                                     R.ok(c))),
+                   h)
+
+def Laws.sweep_csr_ok_shape(indptr, ixs, pays, c, h):
+  PR.and_elim_l_go(S.cs_shape_ok(pays, R.nats_len(ixs)),
+                   Bool.and(S.cs_rows_csr_ok(R.nats_len(R.cfg_lanes(c)),
+                                             R.cfg_horizon(c), indptr, ixs,
+                                             pays),
+                            R.ok(c)),
+                   PR.and_elim_r_go(Nat.is_le(S.pays_len(pays), 8n),
+                                    Bool.and(S.cs_shape_ok(pays,
+                                                           R.nats_len(ixs)),
+                                             Bool.and(S.cs_rows_csr_ok(
+                                                        R.nats_len(R.cfg_lanes(c)),
+                                                        R.cfg_horizon(c),
+                                                        indptr, ixs, pays),
+                                                      R.ok(c))),
+                                    h))
+
+def Laws.sweep_csr_ok_csr(indptr, ixs, pays, c, h):
+  PR.and_elim_l_go(S.cs_rows_csr_ok(R.nats_len(R.cfg_lanes(c)),
+                                    R.cfg_horizon(c), indptr, ixs, pays),
+                   R.ok(c),
+                   PR.and_elim_r_go(S.cs_shape_ok(pays, R.nats_len(ixs)),
+                                    Bool.and(S.cs_rows_csr_ok(
+                                               R.nats_len(R.cfg_lanes(c)),
+                                               R.cfg_horizon(c), indptr, ixs,
+                                               pays),
+                                             R.ok(c)),
+                                    PR.and_elim_r_go(Nat.is_le(S.pays_len(pays), 8n),
+                                                     Bool.and(S.cs_shape_ok(
+                                                                pays,
+                                                                R.nats_len(ixs)),
+                                                              Bool.and(S.cs_rows_csr_ok(
+                                                                         R.nats_len(R.cfg_lanes(c)),
+                                                                         R.cfg_horizon(c),
+                                                                         indptr, ixs, pays),
+                                                                       R.ok(c))),
+                                                     h)))
+
+def Laws.sweep_csr_ok_cfg(indptr, ixs, pays, c, h):
+  PR.and_elim_r_go(S.cs_rows_csr_ok(R.nats_len(R.cfg_lanes(c)),
+                                    R.cfg_horizon(c), indptr, ixs, pays),
+                   R.ok(c),
+                   PR.and_elim_r_go(S.cs_shape_ok(pays, R.nats_len(ixs)),
+                                    Bool.and(S.cs_rows_csr_ok(
+                                               R.nats_len(R.cfg_lanes(c)),
+                                               R.cfg_horizon(c), indptr, ixs,
+                                               pays),
+                                             R.ok(c)),
+                                    PR.and_elim_r_go(Nat.is_le(S.pays_len(pays), 8n),
+                                                     Bool.and(S.cs_shape_ok(
+                                                                pays,
+                                                                R.nats_len(ixs)),
+                                                              Bool.and(S.cs_rows_csr_ok(
+                                                                         R.nats_len(R.cfg_lanes(c)),
+                                                                         R.cfg_horizon(c),
+                                                                         indptr, ixs, pays),
+                                                                       R.ok(c))),
+                                                     h)))
+
+# the positive validator pin: pure computation on the literal sweep and
+# the literal config -- every conjunct computes on concrete input.
+def Laws.sweep_csr_ok_instance():
+  {==}
+
+# the capstone: three cong steps under Equal.trans -- one per component
+# of the right-nested triple -- with the routing half from
+# Laws.sweep_csr_valid_nth, the routing-half's read keyed to the ROUTED
+# payload (pay_nth), exactly the form the composition needs.
+def Laws.sweep_csr_contract(indptr, ixs, pays, c, h, i, hi):
+  +h2 = h
+  +hiB = sw_le_b(Nat.add(i, 1n), S.pays_len(pays), hi)
+  hroute = Laws.sweep_csr_route(pays, i,
+                                PR.b_le(Nat.add(i, 1n), S.pays_len(pays), hiB))
+  hvalid = Laws.sweep_csr_valid_nth(indptr, ixs, pays, c, h2, i,
+                                    PR.b_le(Nat.add(i, 1n), S.pays_len(pays), hiB))
+  hshape = Laws.sweep_csr_shape_shared(pays, ixs,
+                                       Laws.sweep_csr_ok_shape(indptr, ixs,
+                                                               pays, c, h2),
+                                       i,
+                                       PR.b_le(Nat.add(i, 1n), S.pays_len(pays), hiB))
+  Equal.trans(S.CsrPay & (Bool & Bool),
+    (S.pay_nth(pays, i),
+     R.csr_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c),
+              S.pay_csr(indptr, ixs, S.pay_nth(pays, i))),
+     S.pay_shape_ok(S.pay_nth(pays, i), R.nats_len(ixs))),
+    (S.pay_ref(pays, i),
+     R.csr_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c),
+              S.pay_csr(indptr, ixs, S.pay_nth(pays, i))),
+     S.pay_shape_ok(S.pay_nth(pays, i), R.nats_len(ixs))),
+    (S.pay_ref(pays, i), True{}, True{}),
+    Equal.cong(S.CsrPay, S.CsrPay & (Bool & Bool),
+               w => (w,
+                     R.csr_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c),
+                              S.pay_csr(indptr, ixs, S.pay_nth(pays, i))),
+                     S.pay_shape_ok(S.pay_nth(pays, i), R.nats_len(ixs))),
+               S.pay_nth(pays, i), S.pay_ref(pays, i), hroute),
+    Equal.trans(S.CsrPay & (Bool & Bool),
+      (S.pay_ref(pays, i),
+       R.csr_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c),
+                S.pay_csr(indptr, ixs, S.pay_nth(pays, i))),
+       S.pay_shape_ok(S.pay_nth(pays, i), R.nats_len(ixs))),
+      (S.pay_ref(pays, i), True{},
+       S.pay_shape_ok(S.pay_nth(pays, i), R.nats_len(ixs))),
+      (S.pay_ref(pays, i), True{}, True{}),
+      Equal.cong(Bool, S.CsrPay & (Bool & Bool),
+                 w => (S.pay_ref(pays, i), w,
+                       S.pay_shape_ok(S.pay_nth(pays, i), R.nats_len(ixs))),
+                 R.csr_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c),
+                          S.pay_csr(indptr, ixs, S.pay_nth(pays, i))),
+                 True{}, hvalid),
+      Equal.cong(Bool, S.CsrPay & (Bool & Bool),
+                 w => (S.pay_ref(pays, i), True{}, w),
+                 S.pay_shape_ok(S.pay_nth(pays, i), R.nats_len(ixs)),
+                 True{}, hshape)))

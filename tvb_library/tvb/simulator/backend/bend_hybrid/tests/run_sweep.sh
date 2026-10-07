@@ -17,7 +17,8 @@ else
   fail=1
 fi
 
-for f in bad/bad_sweep_width.bend bad/bad_sweep_rowshape.bend; do
+for f in bad/bad_sweep_width.bend bad/bad_sweep_rowshape.bend \
+         bad/bad_sweep_csr.bend; do
   if "$BEND" "$f" >/dev/null 2>&1; then
     echo "FAIL $f (negative control type-checked!)"
     fail=1

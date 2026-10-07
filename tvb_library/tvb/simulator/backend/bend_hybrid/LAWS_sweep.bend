@@ -472,3 +472,155 @@ law sw_name_slot_unknown:
   for k: Nat
   for +h: {S.str_nth(names, k) == "io_gain" : String}
   {J.sw_slot(names, k) == 9n : Nat}
+
+# --------------------------------------------------------------------------
+# P2 -- the CONNECTOME SWEEP: per-sim CSR payloads over a shared shape
+# --------------------------------------------------------------------------
+# The sweep row gains a STRUCTURAL payload: a per-sim CSR with the SAME
+# indptr/indices for every sim (fixed node count, fixed edge layout -- no
+# model sweeps) and VARYING per-edge weights and delays.  The table is a
+# `List<&2, S.CsrPay>` -- one payload RECORD per sim (the representation
+# choice, documented in sweep.bend); the shared shape rides as validator
+# arguments.  A row's CSR is R.Csr{shared indptr, shared indices, row's
+# delays} (S.pay_csr) -- the object the router's csr_ok machinery reads.
+
+# the literal connectome sweep the instance laws pin (the csr_row_good
+# convention): 2 nodes, a shared 2-edge shape -- indptr [0,1,2], sources
+# [0,1] -- and TWO per-sim payloads: sim 0 weights [0.1, 0.2] delays
+# [0, 1], sim 1 weights [0.3, 0.4] delays [2, 0].  Same shape, different
+# values: exactly the identical-node-count sweep.
+def CS_INDPTR() -> List<&2, Nat>:
+  0n <> 1n <> 2n <> Nil{}
+
+def CS_IXS() -> List<&2, Nat>:
+  0n <> 1n <> Nil{}
+
+def CS_PAY_0() -> S.CsrPay:
+  S.CsrPay{0.1 <> 0.2 <> Nil{}, 0n <> 1n <> Nil{}}
+
+def CS_PAY_1() -> S.CsrPay:
+  S.CsrPay{0.3 <> 0.4 <> Nil{}, 2n <> 0n <> Nil{}}
+
+def CS_PAYS() -> List<&2, S.CsrPay>:
+  CS_PAY_0() <> CS_PAY_1() <> Nil{}
+
+# the shared config the validator instances run against: 2 lanes
+# (the 2 nodes), 1 projection, horizon 4 -- R.ok-approved (the
+# json_sweep_valid_instance config)
+def CS_CONFIG() -> R.Config:
+  R.Config{1n <> 2n <> Nil{}, R.Proj{0n, 1n, 1n, 0n, 0n} <> Nil{}, 4n}
+
+# the row routing for the structural payload: sim i's payload (weights
+# AND delays together) IS row i -- the sweep_row_nth analog at the CSR
+# level.  The recursive read and the drop+head reference read agree,
+# bounded by lt_ok(i, npays); past the end the claim is UNSTATABLE (the
+# witness cannot be fabricated).
+law sweep_csr_route:
+  for +pays: List<&2, S.CsrPay>
+  for i: Nat
+  for h: R.lt_ok(i, S.pays_len(pays))
+  {S.pay_nth(pays, i) == S.pay_ref(pays, i) : S.CsrPay}
+
+# the instance pins: the literal 2-sim connectome sweep routes sim 0 and
+# sim 1 to their OWN payloads -- weights and delays together.
+law sweep_csr_route_inst_0:
+  {S.pay_nth(CS_PAYS(), 0n) == CS_PAY_0() : S.CsrPay}
+
+law sweep_csr_route_inst_1:
+  {S.pay_nth(CS_PAYS(), 1n) == CS_PAY_1() : S.CsrPay}
+
+# the SHARED SHAPE law: every row's payload is the same length as the
+# shared edge layout -- the identical-node-count assumption as a
+# validator conjunct, inverted per row (the sweep_rows_shape_nth
+# pattern: the every-row fold instantiated at the row the fan routes).
+# The bounds witness is load-bearing: past the table the payload reads
+# empty (0 edges) and the claim would overreach.
+law sweep_csr_shape_shared:
+  for +pays: List<&2, S.CsrPay>
+  for +ixs: List<&2, Nat>
+  for +h: {S.cs_shape_ok(pays, R.nats_len(ixs)) == True{} : Bool}
+  for i: Nat
+  for hi: R.lt_ok(i, S.pays_len(pays))
+  {S.pay_shape_ok(S.pay_nth(pays, i), R.nats_len(ixs)) == True{} : Bool}
+
+# the per-row csr_ok law: EVERY row's CSR -- the shared indptr/indices
+# with the row's delays -- passes the router's R.csr_ok (the
+# sweep_valid_nth pattern over the router's connectome validation).  The
+# node count and horizon come from the shared config.
+law sweep_csr_valid_nth:
+  for +indptr: List<&2, Nat>
+  for +ixs: List<&2, Nat>
+  for +pays: List<&2, S.CsrPay>
+  for +c: R.Config
+  for +h: {S.sweep_csr_ok(indptr, ixs, pays, c) == True{} : Bool}
+  for i: Nat
+  for hi: R.lt_ok(i, S.pays_len(pays))
+  {R.csr_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c),
+            S.pay_csr(indptr, ixs, S.pay_nth(pays, i))) == True{} : Bool}
+
+# the validator's and-elimination family (the section-6 pattern) --
+# sweep_csr_ok is a four-deep nested and: width /\ (shape /\ (csr_ok-fold
+# /\ R.ok)), so each half eliminates down the right spine.
+law sweep_csr_ok_width:
+  for +indptr: List<&2, Nat>
+  for +ixs: List<&2, Nat>
+  for +pays: List<&2, S.CsrPay>
+  for +c: R.Config
+  for +h: {S.sweep_csr_ok(indptr, ixs, pays, c) == True{} : Bool}
+  {Nat.is_le(S.pays_len(pays), 8n) == True{} : Bool}
+
+law sweep_csr_ok_shape:
+  for +indptr: List<&2, Nat>
+  for +ixs: List<&2, Nat>
+  for +pays: List<&2, S.CsrPay>
+  for +c: R.Config
+  for +h: {S.sweep_csr_ok(indptr, ixs, pays, c) == True{} : Bool}
+  {S.cs_shape_ok(pays, R.nats_len(ixs)) == True{} : Bool}
+
+law sweep_csr_ok_csr:
+  for +indptr: List<&2, Nat>
+  for +ixs: List<&2, Nat>
+  for +pays: List<&2, S.CsrPay>
+  for +c: R.Config
+  for +h: {S.sweep_csr_ok(indptr, ixs, pays, c) == True{} : Bool}
+  {S.cs_rows_csr_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c),
+                    indptr, ixs, pays) == True{} : Bool}
+
+law sweep_csr_ok_cfg:
+  for +indptr: List<&2, Nat>
+  for +ixs: List<&2, Nat>
+  for +pays: List<&2, S.CsrPay>
+  for +c: R.Config
+  for +h: {S.sweep_csr_ok(indptr, ixs, pays, c) == True{} : Bool}
+  {R.ok(c) == True{} : Bool}
+
+# the positive validator pin (instance laws are load-bearing): the
+# literal 2-sim connectome sweep PASSES the validator against the good
+# shared config -- two payloads of the 2-edge shape, both CSRs csr_ok
+# (sources < 2 lanes, delays < horizon 4), width <= 8.
+law sweep_csr_ok_instance:
+  {S.sweep_csr_ok(CS_INDPTR(), CS_IXS(), CS_PAYS(), CS_CONFIG()) == True{} : Bool}
+
+# THE CONNECTOME-SWEEP CONTRACT -- the composition capstone: a VALIDATED
+# connectome sweep, at any in-bounds sim i, routes row i's payload to
+# sim i (the CsrPay equality) AND row i's CSR passes the router's
+# connectome validation AND row i's payload is in the shared shape --
+# the sweep's connectivity is provably in-shape and in-bounds per sim.
+# The three halves are heterogeneous (CsrPay / Bool / Bool), so the
+# Type-level conjunction is the right-nested pair equality -- the
+# sweep_contract shape one level down.
+law sweep_csr_contract:
+  for +indptr: List<&2, Nat>
+  for +ixs: List<&2, Nat>
+  for +pays: List<&2, S.CsrPay>
+  for +c: R.Config
+  for +h: {S.sweep_csr_ok(indptr, ixs, pays, c) == True{} : Bool}
+  for +i: Nat
+  for hi: R.lt_ok(i, S.pays_len(pays))
+  {(S.pay_nth(pays, i),
+    R.csr_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c),
+             S.pay_csr(indptr, ixs, S.pay_nth(pays, i))),
+    S.pay_shape_ok(S.pay_nth(pays, i), R.nats_len(ixs)))
+   ==
+   (S.pay_ref(pays, i), True{}, True{})
+   : S.CsrPay & (Bool & Bool)}

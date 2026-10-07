@@ -376,3 +376,139 @@ def rows_shape_ok(rows: List<&2, List<&2, F32>>, +wp: Nat) -> Bool:
 def sweep_rows_ok(+rows: List<&2, List<&2, F32>>, +wp: Nat, +c: R.Config) -> Bool:
   Bool.and(Nat.is_le(rows_len(rows), 8n),
            Bool.and(rows_shape_ok(rows, wp), R.ok(c)))
+
+# --------------------------------------------------------------------------
+# the CONNECTOME sweep (SWEEP_LAWS_DESIGN.md, priority P2): a per-sim CSR
+# PAYLOAD with the SHARED shape.  Every sim of the sweep runs the SAME
+# connectome SHAPE -- fixed node count, fixed edge layout, one shared
+# (indptr, indices) pair -- and varies only the per-edge VALUES: the
+# weights (one F32 per edge) and the delays (one Nat per edge).  NO model
+# sweeps: the structural object swept here is the CSR payload only.
+#
+# REPRESENTATION (decided): the table is a `List<&2, CsrPay>` -- ONE
+# payload RECORD per sim (weights and delays together), not parallel
+# weight/delay lists.  A record keeps the (weights, delays) pair aligned
+# per sim by construction (the same no-desynchronization argument as
+# edge_lines_from's flat (src, delay) read), and the row routing is ONE
+# law over the record instead of two over parallel lists.  The shared
+# shape (indptr, indices) lives OUTSIDE the table: it is one argument of
+# the validator and of the row->CSR builder, shared by every sim.
+#
+# A row's CSR -- the object the router's csr_ok and csr_row_* machinery
+# consume -- is the shared (indptr, indices) paired with the row's
+# delays.  The weights ride alongside (the router's Csr has no weight
+# field; the engine folds the weight separately in its gather).
+type CsrPay is Data:
+  CsrPay{weights: List<&2, F32>, delays: List<&2, Nat>}
+
+def pay_weights(+p: CsrPay) -> List<&2, F32>:
+  match p:
+    case CsrPay{weights, delays}:
+      weights
+
+def pay_delays(+p: CsrPay) -> List<&2, Nat>:
+  match p:
+    case CsrPay{weights, delays}:
+      delays
+
+# sim i's CSR: the SHARED indptr/indices with sim i's delays -- the
+# per-sim object the router's R.csr_ok validates and csr_row_* reads
+def pay_csr(+indptr: List<&2, Nat>, +ixs: List<&2, Nat>, +p: CsrPay) -> R.Csr:
+  R.Csr{indptr, ixs, pay_delays(p)}
+
+# the payload table's length -- the bounds witness of the routing laws
+# (the rows_len pattern at the payload level)
+def pays_len(pays: List<&2, CsrPay>) -> Nat:
+  match pays:
+    case Nil{}:
+      0n
+    case h <> t:
+      1n+pays_len(t)
+
+# sim i's payload: the i-th payload record; missing rows read as the
+# empty payload (the sweep_row / cs_row default convention)
+def pay_nth(pays: List<&2, CsrPay>, i: Nat) -> CsrPay:
+  match pays i:
+    case Nil{} _:
+      CsrPay{Nil{}, Nil{}}
+    case h <> t 0n:
+      h
+    case h <> t 1n+p:
+      pay_nth(t, p)
+
+# the reference payload read, built the offset way: drop i rows, take the
+# head (the rows_drop / rows_head_or pattern).  An INDEPENDENT
+# implementation of the same read -- sweep_csr_route pins the agreement,
+# which is what rules out an off-by-one in the structural payload read.
+def pays_drop(pays: List<&2, CsrPay>, k: Nat) -> List<&2, CsrPay>:
+  match pays k:
+    case Nil{} _:
+      Nil{}
+    case h <> t 0n:
+      h <> t
+    case h <> t 1n+p:
+      pays_drop(t, p)
+
+def pays_head_or(pays: List<&2, CsrPay>, +d: CsrPay) -> CsrPay:
+  match pays:
+    case Nil{}:
+      d
+    case h <> t:
+      h
+
+def pay_ref(pays: List<&2, CsrPay>, i: Nat) -> CsrPay:
+  pays_head_or(pays_drop(pays, i), CsrPay{Nil{}, Nil{}})
+
+# ONE row's SHAPE check: the payload is the same length as the shared
+# edge layout -- as many weights as the shared indices declare AND as
+# many delays (the fixed edge count of the identical-shape sweep)
+def pay_shape_ok(+p: CsrPay, +n: Nat) -> Bool:
+  Bool.and(Nat.is_eq(sweep_len(pay_weights(p)), n),
+           Nat.is_eq(R.nats_len(pay_delays(p)), n))
+
+# the SHARED-SHAPE fold: EVERY row's payload matches the shared edge
+# count -- one Bool, the rows_shape_ok fold at the payload level.  n is
+# the shared edge count, nats_len(indices) at the call site.
+def cs_shape_ok(+pays: List<&2, CsrPay>, +n: Nat) -> Bool:
+  match pays:
+    case Nil{}:
+      True{}
+    case p <> t:
+      Bool.and(pay_shape_ok(p, n), cs_shape_ok(t, n))
+
+# the PER-ROW csr_ok fold: EVERY row's CSR -- shared indptr/indices with
+# the row's delays -- passes the router's R.csr_ok (nsrc = the shared
+# node count, horizon = the shared config's horizon).  The shared arrays'
+# own invariants (first-zero, sorted, last == |indices|, indices in
+# range) are re-checked per row by R.csr_ok -- redundant across rows but
+# honest: the fold IS the per-sim validation the engine would run.
+def cs_rows_csr_ok(+nsrc: Nat, +horizon: Nat, +indptr: List<&2, Nat>,
+                   +ixs: List<&2, Nat>, +pays: List<&2, CsrPay>) -> Bool:
+  match pays:
+    case Nil{}:
+      True{}
+    case p <> t:
+      Bool.and(R.csr_ok(nsrc, horizon, pay_csr(indptr, ixs, p)),
+               cs_rows_csr_ok(nsrc, horizon, indptr, ixs, t))
+
+# THE CONNECTOME-SWEEP VALIDATOR: sweep_ok's structural-payload
+# generalization, four conjuncts:
+#   (a) the WIDTH bound: the payload table fits the fixed 8-wide fan
+#       (the same silent-drop gate as the scalar sweep);
+#   (b) the SHARED SHAPE: every row's payload is as long as the shared
+#       edge layout -- a short row would silently default its missing
+#       weights/delays (the ragged-row mode, at the CSR level);
+#   (c) the PER-ROW csr_ok: every row's CSR (shared shape + row delays)
+#       passes the router's connectome validation -- an out-of-bounds
+#       source index or horizon-breaking delay is a REJECTED config;
+#   (d) the SHARED CONFIG's R.ok, unchanged (one ok() call covers the
+#       whole batch -- only the payload varies per sim).
+# nsrc and horizon come from the shared config: the node count IS the
+# shared config's lane count, the delay bound IS its horizon.
+def sweep_csr_ok(+indptr: List<&2, Nat>, +ixs: List<&2, Nat>,
+                 +pays: List<&2, CsrPay>, +c: R.Config) -> Bool:
+  Bool.and(Nat.is_le(pays_len(pays), 8n),
+  Bool.and(cs_shape_ok(pays, R.nats_len(ixs)),
+  Bool.and(cs_rows_csr_ok(R.nats_len(R.cfg_lanes(c)), R.cfg_horizon(c),
+                          indptr, ixs, pays),
+           R.ok(c))))
