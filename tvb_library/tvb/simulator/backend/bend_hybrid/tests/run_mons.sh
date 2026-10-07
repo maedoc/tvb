@@ -17,7 +17,7 @@ else
   fail=1
 fi
 
-for f in bad/bad_mon_rate.bend; do
+for f in bad/bad_mon_rate.bend bad/bad_mon_period.bend bad/bad_bold.bend; do
   if "$BEND" "$f" >/dev/null 2>&1; then
     echo "FAIL $f (negative control type-checked!)"
     fail=1

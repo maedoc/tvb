@@ -143,3 +143,129 @@ def mons_ok(+c: R.Config, mcs: List<&2, MonCfg>) -> Bool:
       True{}
     case +h <> t:
       Bool.and(Bool.and(mon_lane_ok(c, h), mon_rate_ok(h)), mons_ok(c, t))
+
+# --------------------------------------------------------------------------
+# per-lane monitor RATES (SWEEP_LAWS_DESIGN.md P1, second half): each
+# subnet/lane carries its OWN monitor period.  The mconfig per-lane idiom:
+# a PARALLEL list `mrs` keyed by lane, riding alongside the monitor set --
+# lane i's monitor samples every mrate_at(mrs, i) master ticks.
+#
+# CONVENTIONS (both pinned by laws):
+#   * reads PAST the rate list's end land on rate 0n (the nats_nth
+#     convention) -- mons_rate_past_end;
+#   * the JUNK lane index for a monitor is the rate list's OWN LENGTH (the
+#     P4 find_name convention): a monitor at lane mrates_len(mrs) is
+#     REJECTED by mtot_ok (mon_lane_ok's lane < nlanes bound against the
+#     length conjunct) -- the mtot_ok_junk_lane negative instance;
+#   * so the validator NEVER defaults a lane: the length conjunct rejects
+#     a short list, the rate fold rejects a rate-0 entry, and the base
+#     mons_ok rejects an out-of-range lane (the scheme_ok shape).
+# --------------------------------------------------------------------------
+
+def mrates_len(mrs: List<&2, Nat>) -> Nat:
+  match mrs:
+    case Nil{}:
+      0n
+    case h <> t:
+      Nat.add(1n, mrates_len(t))
+
+# lane i's monitor rate: entry i of the per-lane rate list (0n past the
+# end, so a lane past the list reads rate 0 -- rejected by the validator's
+# rate fold, one way or the other)
+def mrate_at(+mrs: List<&2, Nat>, +i: Nat) -> Nat:
+  match mrs i:
+    case Nil{} _:
+      0n
+    case h <> t 0n:
+      h
+    case h <> t 1n+p:
+      mrate_at(t, p)
+
+# every RATE in the per-lane list is a rate: at least 1 master tick per
+# sample (a 0 entry would sample never and divide its average by a stuck
+# count -- the bad/bad_mon_period.bend control)
+def rates_ok(mrs: List<&2, Nat>) -> Bool:
+  match mrs:
+    case Nil{}:
+      True{}
+    case h <> t:
+      Bool.and(Nat.is_ge(h, 1n), rates_ok(t))
+
+# THE PER-LANE VALIDATOR, three flat conjuncts (the section-6
+# and-elimination shape):
+#   (a) ONE rate per lane -- the length conjunct; a short list would
+#       leave a lane reading the past-the-end junk (the own-length junk
+#       convention makes reads UNREACHABLE, never silently defaulted);
+#   (b) every rate >= 1 (rate 0 rejected);
+#   (c) the base monitor-set validator mons_ok -- which checks each
+#       monitor's LANE against the config's lane list, i.e. the junk lane
+#       index = the rate list's own length is rejected there.
+# The per-lane layer GATES on the monitor layer, never re-states it.
+def mtot_ok(+mrs: List<&2, Nat>, +mcs: List<&2, MonCfg>, +c: R.Config) -> Bool:
+  Bool.and(Nat.is_eq(mrates_len(mrs), R.nats_len(R.cfg_lanes(c))),
+  Bool.and(rates_ok(mrs),
+           mons_ok(c, mcs)))
+
+# --------------------------------------------------------------------------
+# BOLD / tavg monitor KINDS (SWEEP_LAWS_DESIGN.md P1, the BOLD half):
+# alongside the tavg monitor the layer carries a KIND tag, so a monitor can
+# be a BOLD monitor.  Deliberate boundary (the suite's division of labour):
+# the BOLD HRF CONVOLUTION is float numerics and lives in the compare_*.py
+# drivers -- this layer pins ONLY the kind routing (which constructor
+# carries which kind) and the SAMPLE SCHEDULE SHAPE (kind + period in
+# master ticks).  The count machine is SHARED: a BOLD monitor samples on
+# the same periodic schedule as a tavg monitor of the same period
+# (mon_count) -- the kind labels which downstream consumes the samples.
+# --------------------------------------------------------------------------
+
+type MonKind is Data:
+  MKtavg{}
+  MKbold{}
+
+# which kind a constructor carries (the kind routing, in Bool form so the
+# laws can use them as conjuncts)
+def mkind_is_tavg(+k: MonKind) -> Bool:
+  match k:
+    case MKtavg{}:
+      True{}
+    case MKbold{}:
+      False{}
+
+def mkind_is_bold(+k: MonKind) -> Bool:
+  match k:
+    case MKtavg{}:
+      False{}
+    case MKbold{}:
+      True{}
+
+# the sample schedule shape: the monitor KIND plus the period in master
+# ticks between samples.  A BOLD monitor is MonSchedule{MKbold{}, p}, a
+# tavg monitor MonSchedule{MKtavg{}, p} -- which constructor carries which
+# kind is pinned by the kind laws.
+type MonSchedule is Data:
+  MonSchedule{kind: MonKind, period: Nat}
+
+def sch_kind(+s: MonSchedule) -> MonKind:
+  match s:
+    case MonSchedule{kind, period}:
+      kind
+
+def sch_period(+s: MonSchedule) -> Nat:
+  match s:
+    case MonSchedule{kind, period}:
+      period
+
+def sch_is_tavg(+s: MonSchedule) -> Bool:
+  mkind_is_tavg(sch_kind(s))
+
+def sch_is_bold(+s: MonSchedule) -> Bool:
+  mkind_is_bold(sch_kind(s))
+
+# every schedule carries one of the two kinds (the constructor cover)
+def sch_covers(+s: MonSchedule) -> Bool:
+  Bool.or(sch_is_tavg(s), sch_is_bold(s))
+
+# the BOLD schedule of lane i: the BOLD kind at the lane's ROUTED rate
+# (rate[i]) -- the per-lane period feeds the BOLD sampler unchanged
+def bold_schedule_of(+mrs: List<&2, Nat>, +i: Nat) -> MonSchedule:
+  MonSchedule{MKbold{}, mrate_at(mrs, i)}

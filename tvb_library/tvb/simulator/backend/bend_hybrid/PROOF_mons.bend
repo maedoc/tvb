@@ -306,3 +306,192 @@ def Laws.mon_divisor(m, q, ks, h):
 # ticks the per-subnet monitor divides by 2, the shared count is 6
 def Laws.mon_divisor_instance():
   {==}
+
+# --------------------------------------------------------------------------
+# P1 part 2 -- the PER-LANE RATES.  The new laws either are the family
+# laws INSTANTIATED at the routed rate M.mrate_at(mrs, i) (proofs are the
+# instantiation calls) or are the nth-family inductions over the rate
+# list itself.  No new arithmetic anywhere; the count law mons_period_count
+# reuses mon_rate_count, the composition mons_lane_count_route reuses
+# mon_lane_count (whose own proof goes through the newest_at bridge), and
+# mons_divisor_route reuses mon_divisor.
+# --------------------------------------------------------------------------
+
+# mons_rate_nth: the routed read IS the list's i-th entry.  Induction on
+# (mrs, i) with the bound witness -- the lanes_nth_valid pattern; the
+# Nil arm is absurd (lt_ok(i, 0n) is Empty).
+def mrates_nth_go(+mrs: List<&2, Nat>, +i: Nat,
+                   h: R.lt_ok(i, M.mrates_len(mrs)))
+    -> {M.mrate_at(mrs, i) == R.nats_nth(mrs, i) : Nat}:
+  match mrs i h:
+    case Nil{} _ h:
+      Empty.absurd({M.mrate_at(Nil{}, i) == R.nats_nth(Nil{}, i) : Nat},
+                   PR.lt_ok_nil_absurd(i, h))
+    case k <> t 0n _:
+      {==}
+    case k <> t 1n+q hlt:
+      mrates_nth_go(t, q, hlt)
+
+def Laws.mons_rate_nth(mrs, i, h):
+  mrates_nth_go(mrs, i, h)
+
+# mons_rate_past_end: the read AT the list's own length lands on rate 0.
+# Induction on mrs; the succ arm reduces mrates_len(k <> t) to 1n+|t| and
+# the match's 1n+p arm to mrate_at(t, |t|) -- the IH.
+def mons_rate_past_end_go(+mrs: List<&2, Nat>)
+    -> {M.mrate_at(mrs, M.mrates_len(mrs)) == 0n : Nat}:
+  match mrs:
+    case Nil{}:
+      {==}
+    case k <> t:
+      mons_rate_past_end_go(t)
+
+def Laws.mons_rate_past_end(mrs):
+  mons_rate_past_end_go(mrs)
+
+def Laws.mons_rate_instance_0():
+  {==}
+
+def Laws.mons_rate_instance_1():
+  {==}
+
+# the count law at the routed rate: mon_rate_count at m := mrate_at(mrs, i)
+# -- the instantiation IS the proof.
+def Laws.mons_period_count(mrs, i, q, r, h, hg, hr):
+  Laws.mon_rate_count(M.mrate_at(mrs, i), q, r, hg, hr)
+
+def Laws.mons_period_count_instance():
+  {==}
+
+# the composition at the routed rate: mon_lane_count at k := mrate_at(mrs,
+# i) -- the instantiation IS the proof (the lane half of the family law
+# already composes through the newest_at bridge).
+def Laws.mons_lane_count_route(mrs, i, q, r, n, h, hg, hr):
+  Laws.mon_lane_count(M.mrate_at(mrs, i), q, r, n, hg, hr)
+
+def Laws.mons_lane_count_route_instance():
+  {==}
+
+# the divisor pinning at the routed rate: mon_divisor at m := mrate_at(mrs,
+# i) -- the per-own-step divisor 1+q vs the shared master span (1+q)*m,
+# instantiated.
+def Laws.mons_divisor_route(mrs, i, q, ks, h, hg):
+  Laws.mon_divisor(M.mrate_at(mrs, i), q, ks, hg)
+
+def Laws.mons_divisor_route_instance():
+  {==}
+
+# --------------------------------------------------------------------------
+# the per-lane validator: instance pins (pure computation) and the
+# and-elimination family (one and_elim walk per conjunct, the section-6
+# pattern).  mtot_ok's three flat conjuncts: the length conjunct, the rate
+# fold, then the base monitor set.
+# --------------------------------------------------------------------------
+
+def Laws.mtot_ok_good():
+  {==}
+
+def Laws.mtot_ok_bad_rate():
+  {==}
+
+def Laws.mtot_ok_bad_short():
+  {==}
+
+def Laws.mtot_ok_bad_lane():
+  {==}
+
+def Laws.mtot_ok_junk_lane():
+  {==}
+
+# the length conjunct is the OUTER and's left half
+def Laws.mons_per_ok_len(mrs, mcs, c, hok):
+  PR.and_elim_l_go(Nat.is_eq(M.mrates_len(mrs), R.nats_len(R.cfg_lanes(c))),
+                   Bool.and(M.rates_ok(mrs), M.mons_ok(c, mcs)),
+                   hok)
+
+# the rate fold: peel the length conjunct, then the left half
+def Laws.mons_per_ok_rates(mrs, mcs, c, hok):
+  PR.and_elim_l_go(M.rates_ok(mrs), M.mons_ok(c, mcs),
+                   PR.and_elim_r_go(Nat.is_eq(M.mrates_len(mrs), R.nats_len(R.cfg_lanes(c))),
+                                    Bool.and(M.rates_ok(mrs), M.mons_ok(c, mcs)),
+                                    hok))
+
+# the base monitor set: peel the length conjunct, then the right half
+def Laws.mons_per_ok_mons(mrs, mcs, c, hok):
+  PR.and_elim_r_go(M.rates_ok(mrs), M.mons_ok(c, mcs),
+                   PR.and_elim_r_go(Nat.is_eq(M.mrates_len(mrs), R.nats_len(R.cfg_lanes(c))),
+                                    Bool.and(M.rates_ok(mrs), M.mons_ok(c, mcs)),
+                                    hok))
+
+# the per-index rate bound: induction on the rate list, peeling the index
+# -- the lanes_nth_valid pattern.  The Nil case is absurd (lt_ok(i, 0n));
+# the head case is the fold's head entry (mrate_at(k <> t, 0n) IS k); the
+# succ case recurses into the tail with the tail conjunct -- mrate_at's
+# 1n+p arm reduces the goal to the recursive call exactly.
+def mons_rates_ok_nth_go(+mrs: List<&2, Nat>, +i: Nat,
+                         h: R.lt_ok(i, M.mrates_len(mrs)),
+                         hok: {M.rates_ok(mrs) == True{} : Bool})
+    -> {Nat.is_ge(M.mrate_at(mrs, i), 1n) == True{} : Bool}:
+  match mrs i h:
+    case Nil{} _ h:
+      Empty.absurd({Nat.is_ge(M.mrate_at(Nil{}, i), 1n) == True{} : Bool},
+                   PR.lt_ok_nil_absurd(i, h))
+    case k <> t 0n _:
+      PR.and_elim_l_go(Nat.is_ge(k, 1n), M.rates_ok(t), hok)
+    case k <> t 1n+q hlt:
+      mons_rates_ok_nth_go(t, q, hlt,
+                           PR.and_elim_r_go(Nat.is_ge(k, 1n), M.rates_ok(t), hok))
+
+def Laws.mons_rates_ok_nth(mrs, i, h, hok):
+  mons_rates_ok_nth_go(mrs, i, h, hok)
+
+# --------------------------------------------------------------------------
+# P1 part 3 -- the BOLD monitor kind and its sample schedule.  The kind
+# routing pins are literal reductions; the cover law is the two-arm match;
+# the count law is mon_rate_count instantiated at the schedule's period
+# (the count machine is SHARED with tavg -- the kind labels only the
+# downstream, and the HRF semantics live in compare_*.py).
+# --------------------------------------------------------------------------
+
+def Laws.bold_kind_carrier():
+  {==}
+
+def Laws.tavg_kind_carrier():
+  {==}
+
+def Laws.kind_disjoint():
+  {==}
+
+# the constructor cover: two arms, one per kind constructor; each arm
+# normalises sch_covers to Bool.or(True, False) / Bool.or(False, True).
+def Laws.bold_kind_covers(s):
+  match s:
+    case M.MonSchedule{M.MKtavg{}, p}:
+      {==}
+    case M.MonSchedule{M.MKbold{}, p}:
+      {==}
+
+def Laws.bold_schedule_shape():
+  {==}
+
+def Laws.tavg_schedule_shape():
+  {==}
+
+# the BOLD sample schedule: mon_rate_count at the schedule's own period.
+# The kind witness hb marks the claim BOLD; the count machinery does not
+# branch on it (the sampler is shared), which is exactly the pinned
+# division of labour.
+def Laws.bold_sample_count(s, q, r, hb, hp, hr):
+  Laws.mon_rate_count(M.sch_period(s), q, r, hp, hr)
+
+def Laws.bold_sample_count_instance():
+  {==}
+
+# the per-lane BOLD routing: the BOLD schedule of lane i carries the
+# lane's routed rate as its period -- definitional (sch_period reads the
+# record field).
+def Laws.bold_schedule_route(mrs, i):
+  {==}
+
+def Laws.bold_schedule_route_instance():
+  {==}
