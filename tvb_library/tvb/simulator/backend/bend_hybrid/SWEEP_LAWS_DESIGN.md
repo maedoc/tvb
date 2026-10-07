@@ -204,3 +204,37 @@ new law family:
   fields); the width bound stays at 8 for the current engine.
 - the JSON sweep ingress follows (columns; total decode; the
   json_read_fresh analog).
+
+## Gap inventory 2026-10-05 — arbitrarily complex models and sweeps
+
+Honest backlog for "arbitrarily complex multi-network multi-dt models and
+arbitrarily complex parameter sweeps" (each is a small law family in the
+established pattern, unless marked FUNDAMENTAL):
+
+Config/model side:
+1. Non-integer dt ratios (dt 0.07 vs 0.1) — FUNDAMENTAL scope limit: the
+   router is Nat-period by construction; arbitrary ratios need rational
+   time + interpolation-phase laws (a bigger formal object, not a law gap).
+2. Per-subnet integrators/schemes (and stochastic variants with per-sim
+   seed routing) — the validator knows nothing of the scheme dimension.
+3. n_svars per subnet unvalidated (cvar counts are; state-var counts not).
+4. Coupling-function variety: only the Linear leaf is pinned
+   (cfun_linear_order); sigmoidal pre/post variants need their own pins.
+5. cvar name-resolution (the 'y1'->'xi' mapping resolved per model) — the
+   sweep's sw_name_slot analog at the config level.
+6. Delay units: ms -> source-step conversion + rounding is unpinned
+   (off-by-rounding shifts causality silently).
+
+Sweep side:
+7. Structural sweeps (per-sim connectome/model/integer params) — rows are
+   F32 scalars; needs a variant payload type.
+8. Grid sweeps (cross-product of independent ranges) — columns vary
+   together per row; a grid needs the row = grid-point construction.
+9. Output un-routing: which slice of the concatenated output belongs to
+   which subnet x sim (the demos' per-subnet extraction) — the reverse
+   routing, slice_nth-shaped. Arguably the most user-visible gap.
+10. Monitor variety: tavg covered (count + ZOH); BOLD and per-subnet
+    monitor periods not.
+
+Also of record: the demo's parallel-vs-sequential bit-exactness TEST is
+the engine mirror of fan_gather_order's LAW.
