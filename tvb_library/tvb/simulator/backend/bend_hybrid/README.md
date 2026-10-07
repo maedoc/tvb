@@ -49,13 +49,14 @@ structures are, what the laws say, and how to check them.
 > [VALUE_LEVEL_EXPLAINER.md](VALUE_LEVEL_EXPLAINER.md) for what could be
 > proved about values, at what cost.
 
-Status: **175 laws** in `LAWS_router.bend`, **73** in `LAWS_sweep.bend`
+Status: **313 laws** across six law files — **175** in `LAWS_router.bend`,
+**73** in `LAWS_sweep.bend`
 (parameter, connectome, seed and output-un-routing sweeps), **34** in
 `LAWS_mconfig.bend` (heterogeneous models: cvar bounds, schemes,
 name-resolution, the named-config JSON ingress), **13** in
 `LAWS_mons.bend` (monitoring variety), **5**
-in `LAWS_json.bend`, **13** model-level in `LAWS.bend` — 313 total,
-every one kernel-verified
+in `LAWS_json.bend`, **13** model-level in `LAWS.bend` — every one
+kernel-verified
 (`bend PROOF_router.bend --verdict`), with 17 negative controls that the
 checker must *reject*. Everything is quantified: the JSON ingress decodes
 **any** string (garbage included), so a claim over `String` is a claim
