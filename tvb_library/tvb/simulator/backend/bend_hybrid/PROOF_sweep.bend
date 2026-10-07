@@ -704,6 +704,15 @@ def cs_shape_nth_go(i: Nat, pays: List<&2, S.CsrPay>, +n: Nat,
 def Laws.sweep_csr_shape_shared(pays, ixs, h, i, hi):
   cs_shape_nth_go(i, pays, R.nats_len(ixs), h, hi)
 
+# sweep_csr_shared_indptr: DEFINITIONAL -- pay_csr is a constructor
+# application whose FIRST field is literally indptr, and the accessor
+# csr_indptr reads only that field (never the row's delays), so
+# csr_indptr(pay_csr(indptr, ixs, p)) reduces to indptr for ANY row --
+# symbolic pay_nth(pays, i) or not, bounds or past-the-end.  No
+# induction needed: {==} closes the quantified claim directly.
+def Laws.sweep_csr_shared_indptr(indptr, ixs, pays, i):
+  {==}
+
 # sweep_csr_valid_nth: the same induction over the PER-ROW csr_ok fold --
 # the head's R.csr_ok is the and-left, the tail's fold the and-right.
 def cs_valid_nth_go(i: Nat, pays: List<&2, S.CsrPay>,

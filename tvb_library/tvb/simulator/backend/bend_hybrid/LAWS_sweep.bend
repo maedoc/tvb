@@ -543,6 +543,24 @@ law sweep_csr_shape_shared:
   for hi: R.lt_ok(i, S.pays_len(pays))
   {S.pay_shape_ok(S.pay_nth(pays, i), R.nats_len(ixs)) == True{} : Bool}
 
+# the SHARED-INDPTR pin: the fixed-node-count constraint AT THE CSR
+# OBJECT level -- for EVERY sim the CSR the router validates carries the
+# ONE shared indptr (sim i's CSR is the shared shape plus sim i's
+# delays).  In this representation the indptr is a single
+# builder/validator argument, so there is no per-row indptr to disagree;
+# the law makes that load-bearing: any future refactor that moved the
+# indptr INTO the row (per-sim node counts) breaks this law and the
+# identical-node-count sweep with it.  Unconditional: a past-the-end row
+# reads the empty payload and still carries the shared indptr, so the
+# claim holds for every i -- no bounds witness needed.
+law sweep_csr_shared_indptr:
+  for +indptr: List<&2, Nat>
+  for +ixs: List<&2, Nat>
+  for +pays: List<&2, S.CsrPay>
+  for i: Nat
+  {R.csr_indptr(S.pay_csr(indptr, ixs, S.pay_nth(pays, i))) == indptr
+   : List<&2, Nat>}
+
 # the per-row csr_ok law: EVERY row's CSR -- the shared indptr/indices
 # with the row's delays -- passes the router's R.csr_ok (the
 # sweep_valid_nth pattern over the router's connectome validation).  The
