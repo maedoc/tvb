@@ -180,3 +180,116 @@ def Laws.json_decode_instance():
 
 def Laws.json_decode_garbage():
   {==}
+
+# --------------------------------------------------------------------------
+# 4. the coupling-function spec proofs
+# --------------------------------------------------------------------------
+
+# and-elimination, both halves (PROOF_router's filled Laws.and_elim_l/r,
+# inlined: filled laws do not re-export through module imports)
+def and_elim_l_go(a: Bool, b: Bool, +h: {Bool.and(a, b) == True{} : Bool})
+    -> {a == True{} : Bool}:
+  match a:
+    case True{}:
+      {==}
+    case False{}:
+      Bool.fne({False{} == True{} : Bool}, h)
+
+def and_elim_r_go(a: Bool, b: Bool, +h: {Bool.and(a, b) == True{} : Bool})
+    -> {b == True{} : Bool}:
+  match a:
+    case True{}:
+      h
+    case False{}:
+      Bool.fne({b == True{} : Bool}, h)
+
+# the instance laws: both sides compute to the same normal form
+def Laws.cfun_table_linear(): {==}
+def Laws.cfun_table_scaling(): {==}
+def Laws.cfun_table_sigmoidal(): {==}
+def Laws.cfun_table_sigmoidal_jr(): {==}
+def Laws.cfun_table_sigmoidal_jr_legacy(): {==}
+def Laws.cfun_table_tanh(): {==}
+def Laws.cfun_table_difference(): {==}
+def Laws.cfun_table_kuramoto(): {==}
+def Laws.cfun_table_pre_sigmoidal(): {==}
+def Laws.cfun_table_pre_sigmoidal_dynamic(): {==}
+def Laws.cfun_table_kuramoto_norm(): {==}
+def Laws.cfun_name_linear(): {==}
+def Laws.cfun_kind_unknown(): {==}
+def Laws.cfun_order_linear(): {==}
+def Laws.cfun_order_scaling(): {==}
+def Laws.cfun_order_sigmoidal(): {==}
+def Laws.cfun_order_sigmoidal_jr(): {==}
+def Laws.cfun_order_sigmoidal_jr_legacy(): {==}
+def Laws.cfun_order_tanh(): {==}
+def Laws.cfun_order_difference(): {==}
+def Laws.cfun_order_kuramoto(): {==}
+def Laws.cfun_order_pre_sigmoidal(): {==}
+def Laws.cfun_order_pre_sigmoidal_dynamic(): {==}
+def Laws.cfun_order_kuramoto_norm(): {==}
+def Laws.cf_ok_good(): {==}
+def Laws.cf_ok_len_wrong(): {==}
+def Laws.cf_ok_kind_unknown(): {==}
+def Laws.cf_ok_junk(): {==}
+
+# the validator's and-eliminations: cf_ok is
+# and(is_lt(kind,11), and(is_eq(plen,nparams), valid)), so each conjunct
+# comes off its side of the nested and
+def Laws.cf_ok_in_table(c, h):
+  and_elim_l_go(Nat.is_lt(J.c_kind(c), 11n),
+                Bool.and(Nat.is_eq(J.c_plen(c), J.c_nparams(c)), J.c_valid(c)),
+                h)
+
+def Laws.cf_ok_len_matches(c, h):
+  and_elim_l_go(Nat.is_eq(J.c_plen(c), J.c_nparams(c)), J.c_valid(c),
+                and_elim_r_go(Nat.is_lt(J.c_kind(c), 11n),
+                              Bool.and(Nat.is_eq(J.c_plen(c), J.c_nparams(c)),
+                                       J.c_valid(c)),
+                              h))
+
+def Laws.cf_ok_parse_valid(c, h):
+  and_elim_r_go(Nat.is_eq(J.c_plen(c), J.c_nparams(c)), J.c_valid(c),
+                and_elim_r_go(Nat.is_lt(J.c_kind(c), 11n),
+                              Bool.and(Nat.is_eq(J.c_plen(c), J.c_nparams(c)),
+                                       J.c_valid(c)),
+                              h))
+
+# the capstone: the three conjuncts off the validator hypothesis, then
+# reassembled into the pair equality (three cong steps under one
+# Equal.trans, exactly the json_named_contract shape)
+def Laws.json_cfun_contract(s, h):
+  +c = J.cfun_decode(s)
+  +hk = and_elim_l_go(Nat.is_lt(J.c_kind(c), 11n),
+                      Bool.and(Nat.is_eq(J.c_plen(c), J.c_nparams(c)), J.c_valid(c)),
+                      h)
+  +h2 = and_elim_r_go(Nat.is_lt(J.c_kind(c), 11n),
+                      Bool.and(Nat.is_eq(J.c_plen(c), J.c_nparams(c)), J.c_valid(c)),
+                      h)
+  +hl = and_elim_l_go(Nat.is_eq(J.c_plen(c), J.c_nparams(c)), J.c_valid(c), h2)
+  +hv = and_elim_r_go(Nat.is_eq(J.c_plen(c), J.c_nparams(c)), J.c_valid(c), h2)
+  Equal.trans(Bool & (Bool & Bool),
+    (Nat.is_lt(J.c_kind(c), 11n),
+     Nat.is_eq(J.c_plen(c), J.c_nparams(c)),
+     J.c_valid(c)),
+    (True{},
+     Nat.is_eq(J.c_plen(c), J.c_nparams(c)),
+     J.c_valid(c)),
+    (True{}, True{}, True{}),
+    Equal.cong(Bool, Bool & (Bool & Bool),
+               x => (x,
+                     Nat.is_eq(J.c_plen(c), J.c_nparams(c)),
+                     J.c_valid(c)),
+               Nat.is_lt(J.c_kind(c), 11n), True{}, hk),
+    Equal.trans(Bool & (Bool & Bool),
+      (True{},
+       Nat.is_eq(J.c_plen(c), J.c_nparams(c)),
+       J.c_valid(c)),
+      (True{}, True{}, J.c_valid(c)),
+      (True{}, True{}, True{}),
+      Equal.cong(Bool, Bool & (Bool & Bool),
+                 y => (True{}, y, J.c_valid(c)),
+                 Nat.is_eq(J.c_plen(c), J.c_nparams(c)), True{}, hl),
+      Equal.cong(Bool, Bool & (Bool & Bool),
+                 z => (True{}, True{}, z),
+                 J.c_valid(c), True{}, hv)))

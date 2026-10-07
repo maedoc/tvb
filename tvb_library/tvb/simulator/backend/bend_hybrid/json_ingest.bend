@@ -892,3 +892,284 @@ def jn_good(+jn: JN) -> Bool:
   Bool.and(Nat.is_eq(names_len(jn_tcvars(jn)),
                      R.projs_len(R.cfg_projs(jn_cfg(jn)))),
            M.mc_ok(jn_shapes(jn), jn_view(jn), jn_cfg(jn)))))
+
+# --------------------------------------------------------------------------
+# the COUPLING-FUNCTION (cfun) CONFIG SPEC: pin the JSON -> data-structure
+# mapping so that a mistranscription is unstatable.
+# --------------------------------------------------------------------------
+# Schema (flat keys beside the config keys, the strict JSON subset):
+#   {"cfun_kind":"linear","cfun_params":[a,b]}
+# "cfun_kind" names the coupling function; "cfun_params" is the ordered
+# params array as scaled integers (the 1e6 wire convention -- Bend has no
+# float bit-interpretation, and the F32 leaf values are opaque to the
+# kernel: numeric checks belong to compare_*.py).  The decode is TOTAL
+# (any string yields a CFun; garbage yields the junk kind 11 with
+# valid=False), which is what lets json_cfun_contract quantify over ALL
+# strings.
+#
+# THE KIND TABLE -- what the numba mako template (nb-hybrid-sim.py.mako)
+# actually emits (verified against the template, 2026-10-07).  Each row
+# pins the APPLICATION POINT (pre = per-edge BEFORE the weighted sum,
+# post = AFTER it -- a mis-tag is silently wrong), the ARITY (1 = one
+# source cvar per edge, 2 = two-variable per-edge leaves like the
+# diff/target-state or x0-x1 pairs) and the cfun_params ORDER (the
+# transcription-fragile spot in the mako emission):
+#   id  kind                     point  arity  params (ORDER as emitted)
+#   0   linear                   post   1      [a, b]
+#   1   scaling                  post   1      [a]
+#   2   sigmoidal                post   1      [a, sigma, midpoint, cmin, cmax]
+#   3   sigmoidal_jr             pre    2      [a, cmin, cmax, r, midpoint]
+#   4   sigmoidal_jr_legacy      pre    1      [a, e0, r, v0]
+#   5   tanh                     pre    1      [a, b, midpoint, sigma]
+#   6   difference               pre    2      []
+#   7   kuramoto                 pre    2      []
+#   8   pre_sigmoidal            pre    1      [a, b, c, d, e]
+#   9   pre_sigmoidal_dynamic    pre    2      [H, Q, G, P, -, globalT]
+#  10   kuramoto_norm            post   1      [a, 1/N]
+# NOTE vs the expected-list brief: the reference ALSO emits kuramoto_norm
+# (post_ct "kuramoto_norm" -- a*(1/N)*wsum -- see the template's dispatch;
+# ct 'kuramoto' is the PRE half).  The reference wins: 11 rows.
+# Anything else is the junk kind 11 (never accepted).
+
+# a spec row: the kind's name (the JSON kind id), its application point,
+# its arity and its param count
+type CRow is Data:
+  CRow{name: String, pre: Bool, arity: Nat, nparams: Nat}
+
+# the decoded coupling-function SPEC: the kind id, its application point,
+# its arity, the params array's first SIX slots as the ORDERED fields
+# (JSON params[i] lands in field i -- pinned by the cf_*_order laws),
+# the decoded params array's length (plen), the kind's param count
+# (nparams, from the table) and the parse gate
+type CFun is Data:
+  CFun{kind: Nat, pre: Bool, arity: Nat,
+       a: Nat, b: Nat, c: Nat, d: Nat, e: Nat, f: Nat,
+       plen: Nat, nparams: Nat, valid: Bool}
+
+def cr_name(+r: CRow) -> String:
+  match r:
+    case CRow{name, pre, arity, nparams}:
+      name
+
+def cr_pre(+r: CRow) -> Bool:
+  match r:
+    case CRow{name, pre, arity, nparams}:
+      pre
+
+def cr_arity(+r: CRow) -> Nat:
+  match r:
+    case CRow{name, pre, arity, nparams}:
+      arity
+
+def cr_nparams(+r: CRow) -> Nat:
+  match r:
+    case CRow{name, pre, arity, nparams}:
+      nparams
+
+def c_kind(+c: CFun) -> Nat:
+  match c:
+    case CFun{kind, pre, arity, a, b, c, d, e, f, plen, nparams, valid}:
+      kind
+
+def c_pre(+c: CFun) -> Bool:
+  match c:
+    case CFun{kind, pre, arity, a, b, c, d, e, f, plen, nparams, valid}:
+      pre
+
+def c_arity(+c: CFun) -> Nat:
+  match c:
+    case CFun{kind, pre, arity, a, b, c, d, e, f, plen, nparams, valid}:
+      arity
+
+def c_plen(+c: CFun) -> Nat:
+  match c:
+    case CFun{kind, pre, arity, a, b, c, d, e, f, plen, nparams, valid}:
+      plen
+
+def c_a(+c: CFun) -> Nat:
+  match c:
+    case CFun{kind, pre, arity, a, b, c, d, e, f, plen, nparams, valid}:
+      a
+
+def c_b(+c: CFun) -> Nat:
+  match c:
+    case CFun{kind, pre, arity, a, b, c, d, e, f, plen, nparams, valid}:
+      b
+
+def c_c(+c: CFun) -> Nat:
+  match c:
+    case CFun{kind, pre, arity, a, b, c, d, e, f, plen, nparams, valid}:
+      c
+
+def c_d(+c: CFun) -> Nat:
+  match c:
+    case CFun{kind, pre, arity, a, b, c, d, e, f, plen, nparams, valid}:
+      d
+
+def c_e(+c: CFun) -> Nat:
+  match c:
+    case CFun{kind, pre, arity, a, b, c, d, e, f, plen, nparams, valid}:
+      e
+
+def c_f(+c: CFun) -> Nat:
+  match c:
+    case CFun{kind, pre, arity, a, b, c, d, e, f, plen, nparams, valid}:
+      f
+
+def c_nparams(+c: CFun) -> Nat:
+  match c:
+    case CFun{kind, pre, arity, a, b, c, d, e, f, plen, nparams, valid}:
+      nparams
+
+def c_valid(+c: CFun) -> Bool:
+  match c:
+    case CFun{kind, pre, arity, a, b, c, d, e, f, plen, nparams, valid}:
+      valid
+
+# the JSON kind NAME -> table id (unknown -> the junk id 11)
+def cfun_kind_of(+name: String) -> Nat:
+  Bool.pick(Nat, String.eq(name, "linear"), 0n,
+  Bool.pick(Nat, String.eq(name, "scaling"), 1n,
+  Bool.pick(Nat, String.eq(name, "sigmoidal"), 2n,
+  Bool.pick(Nat, String.eq(name, "sigmoidal_jr"), 3n,
+  Bool.pick(Nat, String.eq(name, "sigmoidal_jr_legacy"), 4n,
+  Bool.pick(Nat, String.eq(name, "tanh"), 5n,
+  Bool.pick(Nat, String.eq(name, "difference"), 6n,
+  Bool.pick(Nat, String.eq(name, "kuramoto"), 7n,
+  Bool.pick(Nat, String.eq(name, "pre_sigmoidal"), 8n,
+  Bool.pick(Nat, String.eq(name, "pre_sigmoidal_dynamic"), 9n,
+  Bool.pick(Nat, String.eq(name, "kuramoto_norm"), 10n, 11n)))))))))))
+
+# the TABLE: kind id -> row (unknown/out-of-range id -> the junk row,
+# whose "?" name and 0 arity can never pass cf_ok)
+def cfun_row(id: Nat) -> CRow:
+  match id:
+    case 0n:
+      CRow{"linear", False{}, 1n, 2n}
+    case 1n:
+      CRow{"scaling", False{}, 1n, 1n}
+    case 2n:
+      CRow{"sigmoidal", False{}, 1n, 5n}
+    case 3n:
+      CRow{"sigmoidal_jr", True{}, 2n, 5n}
+    case 4n:
+      CRow{"sigmoidal_jr_legacy", True{}, 1n, 4n}
+    case 5n:
+      CRow{"tanh", True{}, 1n, 4n}
+    case 6n:
+      CRow{"difference", True{}, 2n, 0n}
+    case 7n:
+      CRow{"kuramoto", True{}, 2n, 0n}
+    case 8n:
+      CRow{"pre_sigmoidal", True{}, 1n, 5n}
+    case 9n:
+      CRow{"pre_sigmoidal_dynamic", True{}, 2n, 6n}
+    case 10n:
+      CRow{"kuramoto_norm", False{}, 1n, 2n}
+    case _:
+      CRow{"?", False{}, 0n, 0n}
+
+# a maybe-kind name -> its table id (none -> the junk id 11)
+def cf_kind_of_nm(kn: Maybe<&2, String>) -> Nat:
+  match kn:
+    case Some{value}:
+      cfun_kind_of(value)
+    case _:
+      11n
+
+# assemble the spec: the ROW stamps kind/pre/arity/nparams, the decoded
+# params array stamps the ORDERED fields (params[i] -> field i, and 0n
+# past the end), plen is the array's own length
+def cfun_of(+kind: Nat, +ps: List<&2, Nat>, +valid: Bool) -> CFun:
+  CFun{kind, cr_pre(cfun_row(kind)), cr_arity(cfun_row(kind)),
+       R.nats_nth(ps, 0n), R.nats_nth(ps, 1n), R.nats_nth(ps, 2n),
+       R.nats_nth(ps, 3n), R.nats_nth(ps, 4n), R.nats_nth(ps, 5n),
+       R.nats_len(ps), cr_nparams(cfun_row(kind)), valid}
+
+# the parse accumulator: the kind name, the params array (accumulated
+# PREPENDED, reversed at the close), the key count and the parse gate
+type JCF is Data:
+  JCF{kn: Maybe<&2, String>, ps: List<&2, Nat>, seen: Nat, valid: Bool}
+
+def jcf_kn(+j: JCF) -> Maybe<&2, String>:
+  match j:
+    case JCF{kn, ps, seen, valid}:
+      kn
+
+def jcf_ps(+j: JCF) -> List<&2, Nat>:
+  match j:
+    case JCF{kn, ps, seen, valid}:
+      ps
+
+def jcf_seen(+j: JCF) -> Nat:
+  match j:
+    case JCF{kn, ps, seen, valid}:
+      seen
+
+def jcf_valid(+j: JCF) -> Bool:
+  match j:
+    case JCF{kn, ps, seen, valid}:
+      valid
+
+# key dispatch: a string-valued key is "cfun_kind" (mode 0, recorded) or
+# junk (mode 9); an array-valued key is "cfun_params" (mode 4) or junk
+def cfun_key_kmode(+k2: String) -> Nat:
+  Bool.pick(Nat, String.eq(k2, "cfun_kind"), 0n, 9n)
+
+def cfun_key_pmode(+k2: String) -> Nat:
+  Bool.pick(Nat, String.eq(k2, "cfun_params"), 4n, 9n)
+
+# end of input (or '}' in mode 0): valid iff nothing junk'd AND exactly
+# both keys were seen
+def cfun_end(m: Nat, +j: JCF) -> JCF:
+  match m:
+    case 0n:
+      JCF{jcf_kn(j), jcf_ps(j), jcf_seen(j),
+          Bool.and(jcf_valid(j), Nat.is_eq(jcf_seen(j), 2n))}
+    case _:
+      JCF{jcf_kn(j), jcf_ps(j), jcf_seen(j), False{}}
+
+# the cfun object parser: the obj_go shape -- ONE self-recursive state
+# machine over (tokens, mode).  Modes: 0 object level, 4 inside
+# cfun_params, 9 junk.  A wrong key or shape jumps to mode 9 and the next
+# token falls into the junk arm (invalid).
+def cfun_go(ts: List<&2, Tok>, m: Nat, +pacc: List<&2, Nat>, +seen: Nat,
+            valid: Bool, +kn: Maybe<&2, String>) -> JCF:
+  match ts m:
+    case Nil{} _:
+      cfun_end(m, JCF{kn, pacc, seen, valid})
+    case TBraceO{} <> t 0n:
+      cfun_go(t, 0n, pacc, seen, valid, kn)
+    case TComma{} <> t 0n:
+      cfun_go(t, 0n, pacc, seen, valid, kn)
+    case TBraceC{} <> t 0n:
+      cfun_end(0n, JCF{kn, pacc, seen, valid})
+    case TStr{+k2} <> TColon{} <> TStr{val} <> t 0n:
+      cfun_go(t, cfun_key_kmode(k2), pacc, 1n+seen, valid, Some{val})
+    case TStr{+k2} <> TColon{} <> TBrackO{} <> t 0n:
+      cfun_go(t, cfun_key_pmode(k2), pacc, 1n+seen, valid, kn)
+    case TNum{val} <> t 4n:
+      cfun_go(t, 4n, val <> pacc, seen, valid, kn)
+    case TComma{} <> t 4n:
+      cfun_go(t, 4n, pacc, seen, valid, kn)
+    case TBrackC{} <> t 4n:
+      cfun_go(t, 0n, nats_rev(pacc, Nil{}), seen, valid, kn)
+    case _ _:
+      JCF{kn, pacc, seen, False{}}
+
+# TOTAL decode: any string at all yields a CFun (garbage -> the junk
+# kind 11, valid False, no params).  The parse gate is valid AND both
+# keys seen; the kind comes from the NAME; the params array from the
+# numbers, in order.
+def cfun_decode(s: String) -> CFun:
+  +j = cfun_go(tokens(s), 0n, Nil{}, 0n, True{}, None{})
+  cfun_of(cf_kind_of_nm(jcf_kn(j)), jcf_ps(j), jcf_valid(j))
+
+# THE CFUN VALIDATOR (the json_good analog at the spec level): the kind
+# is IN the table (id < 11 -- the junk id fails here, name or no name),
+# the decoded params length MATCHES the kind's param count, and the
+# parse gate held.  Wrong length -> False; unknown kind -> False;
+# garbage -> False.
+def cf_ok(+c: CFun) -> Bool:
+  Bool.and(Nat.is_lt(c_kind(c), 11n),
+  Bool.and(Nat.is_eq(c_plen(c), c_nparams(c)), c_valid(c)))

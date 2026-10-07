@@ -21,7 +21,7 @@ else
   fail=1
 fi
 
-for f in bad/bad_wrap.bend bad/bad_json_time.bend; do
+for f in bad/bad_wrap.bend bad/bad_json_time.bend bad/bad_cfun_spec.bend; do
   if "$BEND" "$f" >/dev/null 2>&1; then
     echo "FAIL $f (negative control type-checked!)"
     fail=1

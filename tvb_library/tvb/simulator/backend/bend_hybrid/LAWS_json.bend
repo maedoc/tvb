@@ -97,3 +97,157 @@ law json_read_fresh:
   for +h: {R.ok(J.json_decode(s)) == True{} : Bool}
   {J.bumps_fresh(J.lanes_run(m, R.init_lanes(R.cfg_lanes(J.json_decode(s)))),
                  R.cfg_projs(J.json_decode(s)), 0n) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# 5. the COUPLING-FUNCTION config spec (see json_ingest.bend's cfun
+#    section): pin the JSON -> data-structure mapping so a
+#    mistranscription is UNSTATABLE.
+# --------------------------------------------------------------------------
+# Three fragile spots are pinned here, each by a tier-2 literal law (the
+# kernel reduces both sides on literal configs):
+#   (a) PARAMS ORDER: JSON cfun_params[i] lands in field i of the spec
+#       (a transcription-adjacent copy-paste in the numba mako emission
+#       is the historical bug class); one order law per kind with
+#       nonempty params, tiny literals.
+#   (b) KIND ROUTING: the JSON kind NAME -> table id (cfun_kind_of) and
+#       the id -> row mapping (cfun_row carries the NAME back -- the
+#       round trip is the tag); the junk id 11 exists and never validates.
+#   (c) KIND-TABLE pins: APPLICATION POINT (pre = per-edge before the
+#       weighted sum, post = after -- a mis-tag is silently wrong) and
+#       ARITY (1 vs two-variable per-edge leaves like difference /
+#       kuramoto) per kind.  The template's own dispatch is the truth
+#       (nb-hybrid-sim.py.mako, verified 2026-10-07): note kuramoto_norm
+#       (post, a*(1/N)*wsum) is a REAL kind the reference emits even
+#       though a naive list stops at kuramoto.
+
+# (b)+(c): the 11 table rows -- id -> (name, point, arity, nparams)
+law cfun_table_linear:
+  {J.cfun_row(0n) == J.CRow{"linear", False{}, 1n, 2n} : J.CRow}
+
+law cfun_table_scaling:
+  {J.cfun_row(1n) == J.CRow{"scaling", False{}, 1n, 1n} : J.CRow}
+
+law cfun_table_sigmoidal:
+  {J.cfun_row(2n) == J.CRow{"sigmoidal", False{}, 1n, 5n} : J.CRow}
+
+law cfun_table_sigmoidal_jr:
+  {J.cfun_row(3n) == J.CRow{"sigmoidal_jr", True{}, 2n, 5n} : J.CRow}
+
+law cfun_table_sigmoidal_jr_legacy:
+  {J.cfun_row(4n) == J.CRow{"sigmoidal_jr_legacy", True{}, 1n, 4n} : J.CRow}
+
+law cfun_table_tanh:
+  {J.cfun_row(5n) == J.CRow{"tanh", True{}, 1n, 4n} : J.CRow}
+
+law cfun_table_difference:
+  {J.cfun_row(6n) == J.CRow{"difference", True{}, 2n, 0n} : J.CRow}
+
+law cfun_table_kuramoto:
+  {J.cfun_row(7n) == J.CRow{"kuramoto", True{}, 2n, 0n} : J.CRow}
+
+law cfun_table_pre_sigmoidal:
+  {J.cfun_row(8n) == J.CRow{"pre_sigmoidal", True{}, 1n, 5n} : J.CRow}
+
+law cfun_table_pre_sigmoidal_dynamic:
+  {J.cfun_row(9n) == J.CRow{"pre_sigmoidal_dynamic", True{}, 2n, 6n} : J.CRow}
+
+law cfun_table_kuramoto_norm:
+  {J.cfun_row(10n) == J.CRow{"kuramoto_norm", False{}, 1n, 2n} : J.CRow}
+
+# (b): the name -> id direction (the reference list, plus the junk id)
+law cfun_name_linear:
+  {J.cfun_kind_of("linear") == 0n : Nat}
+
+law cfun_kind_unknown:
+  {J.cfun_kind_of("frobnicate") == 11n : Nat}
+
+# (a)+(c): one decode per kind with nonempty params -- params[i] lands in
+# field i, and the record carries the kind's point/arity/nparams
+law cfun_order_linear:
+  {J.cfun_decode("{\"cfun_kind\":\"linear\",\"cfun_params\":[3,5]}")
+     == J.CFun{0n, False{}, 1n, 3n, 5n, 0n, 0n, 0n, 0n, 2n, 2n, True{}} : J.CFun}
+
+law cfun_order_scaling:
+  {J.cfun_decode("{\"cfun_kind\":\"scaling\",\"cfun_params\":[3]}")
+     == J.CFun{1n, False{}, 1n, 3n, 0n, 0n, 0n, 0n, 0n, 1n, 1n, True{}} : J.CFun}
+
+law cfun_order_sigmoidal:
+  {J.cfun_decode("{\"cfun_kind\":\"sigmoidal\",\"cfun_params\":[1,2,3,4,5]}")
+     == J.CFun{2n, False{}, 1n, 1n, 2n, 3n, 4n, 5n, 0n, 5n, 5n, True{}} : J.CFun}
+
+law cfun_order_sigmoidal_jr:
+  {J.cfun_decode("{\"cfun_kind\":\"sigmoidal_jr\",\"cfun_params\":[1,2,3,4,5]}")
+     == J.CFun{3n, True{}, 2n, 1n, 2n, 3n, 4n, 5n, 0n, 5n, 5n, True{}} : J.CFun}
+
+law cfun_order_sigmoidal_jr_legacy:
+  {J.cfun_decode("{\"cfun_kind\":\"sigmoidal_jr_legacy\",\"cfun_params\":[1,2,3,4]}")
+     == J.CFun{4n, True{}, 1n, 1n, 2n, 3n, 4n, 0n, 0n, 4n, 4n, True{}} : J.CFun}
+
+law cfun_order_tanh:
+  {J.cfun_decode("{\"cfun_kind\":\"tanh\",\"cfun_params\":[1,2,3,4]}")
+     == J.CFun{5n, True{}, 1n, 1n, 2n, 3n, 4n, 0n, 0n, 4n, 4n, True{}} : J.CFun}
+
+law cfun_order_difference:
+  {J.cfun_decode("{\"cfun_kind\":\"difference\",\"cfun_params\":[]}")
+     == J.CFun{6n, True{}, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, True{}} : J.CFun}
+
+law cfun_order_kuramoto:
+  {J.cfun_decode("{\"cfun_kind\":\"kuramoto\",\"cfun_params\":[]}")
+     == J.CFun{7n, True{}, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, True{}} : J.CFun}
+
+law cfun_order_pre_sigmoidal:
+  {J.cfun_decode("{\"cfun_kind\":\"pre_sigmoidal\",\"cfun_params\":[1,2,3,4,5]}")
+     == J.CFun{8n, True{}, 1n, 1n, 2n, 3n, 4n, 5n, 0n, 5n, 5n, True{}} : J.CFun}
+
+law cfun_order_pre_sigmoidal_dynamic:
+  {J.cfun_decode("{\"cfun_kind\":\"pre_sigmoidal_dynamic\",\"cfun_params\":[1,2,3,4,5,6]}")
+     == J.CFun{9n, True{}, 2n, 1n, 2n, 3n, 4n, 5n, 6n, 6n, 6n, True{}} : J.CFun}
+
+law cfun_order_kuramoto_norm:
+  {J.cfun_decode("{\"cfun_kind\":\"kuramoto_norm\",\"cfun_params\":[2,4]}")
+     == J.CFun{10n, False{}, 1n, 2n, 4n, 0n, 0n, 0n, 0n, 2n, 2n, True{}} : J.CFun}
+
+# the validator, pinned on four instances: good, wrong length, unknown
+# kind, garbage
+law cf_ok_good:
+  {J.cf_ok(J.cfun_decode("{\"cfun_kind\":\"linear\",\"cfun_params\":[3,5]}")) == True{} : Bool}
+
+law cf_ok_len_wrong:
+  {J.cf_ok(J.cfun_decode("{\"cfun_kind\":\"linear\",\"cfun_params\":[1,2,3]}")) == False{} : Bool}
+
+law cf_ok_kind_unknown:
+  {J.cf_ok(J.cfun_decode("{\"cfun_kind\":\"frobnicate\",\"cfun_params\":[1,2]}")) == False{} : Bool}
+
+law cf_ok_junk:
+  {J.cf_ok(J.cfun_decode("zz not json")) == False{} : Bool}
+
+# (d) the validator's and-eliminations: an ACCEPTED spec is in-table,
+# length-exact and parse-clean (Bool form, the shape the runtime gates on)
+law cf_ok_in_table:
+  for +c: J.CFun
+  for +h: {J.cf_ok(c) == True{} : Bool}
+  {Nat.is_lt(J.c_kind(c), 11n) == True{} : Bool}
+
+law cf_ok_len_matches:
+  for +c: J.CFun
+  for +h: {J.cf_ok(c) == True{} : Bool}
+  {Nat.is_eq(J.c_plen(c), J.c_nparams(c)) == True{} : Bool}
+
+law cf_ok_parse_valid:
+  for +c: J.CFun
+  for +h: {J.cf_ok(c) == True{} : Bool}
+  {J.c_valid(c) == True{} : Bool}
+
+# (e) THE CFUN CONTRACT -- the capstone in the json_named_contract
+# pair-equality shape: for EVERY string whose decoded spec passes the
+# validator, all three validator conjuncts hold (in-table kind, exact
+# params length against the kind table, clean parse).  Together with the
+# order laws, an ACCEPTED cfun section is a table row: the JSON kind is
+# a real kind, its params array is exactly the kind's params.
+law json_cfun_contract:
+  for +s: String
+  for +h: {J.cf_ok(J.cfun_decode(s)) == True{} : Bool}
+  {(Nat.is_lt(J.c_kind(J.cfun_decode(s)), 11n),
+    Nat.is_eq(J.c_plen(J.cfun_decode(s)), J.c_nparams(J.cfun_decode(s))),
+    J.c_valid(J.cfun_decode(s)))
+   == (True{}, True{}, True{}) : Bool & (Bool & Bool)}
