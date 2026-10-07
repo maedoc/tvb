@@ -295,9 +295,24 @@ sweep routes per sim i the params (row i), the seed (column element i),
 AND the fan coverage (lane i's output is run i) -- the pair-equality
 bundle shape.
 
-P4. CVAR NAME-RESOLUTION. Provable as an association-list lookup law:
-the model description is a key-val list (names <-> indices); the law:
-lookup(name, model_vars) == the index the projection carries, plus the
-pairing law tying the resolved index to the projection's svar/tcvar.
-Precedent: sw_name_slot (name -> slot, unknown -> junk slot) in
-LAWS_sweep.bend.
+P4. CVAR NAME-RESOLUTION -- **Status: implemented**
+(LAWS_mconfig.bend's P4 family, 8 laws, gates green).  The model
+description carries its state-variable NAME LIST (`List<&2, String>`,
+per lane); `find_name` is the association-list find -- the FIRST
+occurrence's index, an unknown name landing on the junk index = THE
+LIST'S OWN LENGTH (computed, so the mc_ok bounds check rejects it; the
+sw_name_slot junk-slot convention at per-model, arbitrary length).  The
+named projection is an NProj{src, tgt, sname, tname}; `mnview` resolves
+each side against ITS lane's name list into the plain MProj view, so
+mc_ok reads the resolved view unchanged.  Laws: cvar_resolve_found
+(presence in Bool form + the not_before first-occurrence fold + a
+bounded index), cvar_resolve_unknown (the sw_name_slot_unknown mirror,
+absence via the not_in fold), the pairing law cvar_resolve_proj (the
+resolved indices ARE the view row's svar/tcvar), cvar_resolve_bounded
+(pairing composed with the mc_ok source bound -- a named projection
+that resolves is valid), the instance pins (JansenRit 'y1' -> 1; the
+same name 'xi' -> 0 on FHN but junk 6 on JansenRit -- resolution is PER
+MODEL), and cvar_ok_good (the demo's named config accepted).  Negative
+control bad/bad_cvar_name.bend: a projection naming a variable the
+target model lacks resolves to junk and is rejected by the bounds
+check.

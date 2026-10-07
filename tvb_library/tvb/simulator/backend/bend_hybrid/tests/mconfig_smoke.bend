@@ -2,8 +2,12 @@
 # heterogeneous network (cortex cvar count 2, thalamus cvar count 1,
 # one cross-model projection).  Pins the view constructor (one MProj
 # per projection, src/tgt copied), the model-relative cvar bounds
-# (svar 0 < 2, tcvar 0 < 1), and the validator's verdict on the good
-# and the bad-cvar (target cvar 1 of a 1-cvar model) shape.
+# (svar 0 < 2, tcvar 0 < 1), the validator's verdict on the good
+# and the bad-cvar (target cvar 1 of a 1-cvar model) shape, and the
+# P4 name resolution: 'y1' -> 1 on JansenRit, 'xi' -> 0 on FHN but
+# junk (the name list's length, 6) on JansenRit, and the named view
+# (resolved svar 1, tcvar 0) accepted by mc_ok against the 6/4
+# state-variable counts.
 # Expected lines are pinned below (#|); run via tests/run_mconfig.sh.
 import Base
 import ../mconfig.bend as M
@@ -20,12 +24,24 @@ def main() -> IO(Unit):
                               R.proj_src(R.nth_proj(R.cfg_projs(c), 0n)))
   +svin : Bool = Nat.is_lt(M.mproj_svar(M.nth_mproj(mps, 0n)), 2n)
   +tvin : Bool = Nat.is_lt(M.mproj_tcvar(M.nth_mproj(mps, 0n)), 1n)
+  +jr_names : List<&2, String> = {"y0" <> "y1" <> "y2" <> "y3" <> "y4" <> "y5" <> Nil{} : List<&2, String>}
+  +fhn_names : List<&2, String> = {"xi" <> "eta" <> "alpha" <> "beta" <> Nil{} : List<&2, String>}
+  +models : List<&2, List<&2, String>> = {jr_names <> fhn_names <> Nil{} : List<&2, List<&2, String>>}
+  +namedok : Bool = M.mc_ok({6n <> 4n <> Nil{} : List<&2, Nat>},
+                            M.mnview(M.NProj{0n, 1n, "y1", "xi"} <> Nil{}, models), c)
+  +jrslot : Nat = M.find_name(jr_names, "y1")
+  +jrxi : Nat = M.find_name(jr_names, "xi")
+  +fhnxi : Nat = M.find_name(fhn_names, "xi")
   +out : String = " " ++ Bool.show(M.mc_ok(shapes, mps, c)) ++ "\n"
     ++ " " ++ Bool.show(M.mc_ok(shapes, bad, c)) ++ "\n"
     ++ " " ++ Bool.show(lenok) ++ "\n"
     ++ " " ++ Bool.show(srcpair) ++ "\n"
     ++ " " ++ Bool.show(svin) ++ "\n"
     ++ " " ++ Bool.show(tvin) ++ "\n"
+    ++ " " ++ Bool.show(namedok) ++ "\n"
+    ++ " " ++ Nat.show(jrslot) ++ "\n"
+    ++ " " ++ Nat.show(jrxi) ++ "\n"
+    ++ " " ++ Nat.show(fhnxi) ++ "\n"
   do IO<Unit>:
     IO.print(out)
 
@@ -35,3 +51,7 @@ def main() -> IO(Unit):
 #| True
 #| True
 #| True
+#| True
+#| 1
+#| 6
+#| 0

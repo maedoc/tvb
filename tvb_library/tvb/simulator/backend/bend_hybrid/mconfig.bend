@@ -200,3 +200,138 @@ def scheme_ok(+table: List<&2, Nat>, +schemes: List<&2, Nat>,
   Bool.and(Nat.is_eq(R.nats_len(schemes), R.nats_len(R.cfg_lanes(c))),
   Bool.and(schemes_ok(schemes, R.nats_len(table)),
            mc_ok(shapes, mps, c)))
+
+# --------------------------------------------------------------------------
+# P4 -- CVAR NAME-RESOLUTION (SWEEP_LAWS_DESIGN.md, priority P4): a model
+# description carries its state-variable NAME LIST -- JansenRit's
+# ["y0".."y5"], ReducedSetFitzHughNagumo's ["xi","eta","alpha","beta"] --
+# and an InterProjection maps NAMED cvars across models (source_cvar='y1'
+# on the source model, target_cvar='xi' on the target).  The coupling slot
+# is MODEL-RELATIVE: the NAME resolves against the SOURCE/TARGET lane's
+# OWN name list -- the same name resolves differently per model.
+#
+# REPRESENTATION (the mconfig pattern, minimal): the per-lane name lists
+# ride as a parallel `List<&2, List<&2, String>>` keyed by lane (the same
+# shape as shapes/schemes; Nil past the end, the nth convention); the
+# named projection is an NProj{src, tgt, sname, tname} record -- src/tgt
+# the lanes, sname/tname the model-relative NAMES -- and the named view
+# constructor `mnview` resolves each NProj against the SRC/TGT lane's name
+# list into an MProj, so the whole mc_ok machinery reads the resolved
+# view unchanged (the layer GATES on what exists, never re-states it).
+#
+# THE LOOKUP `find_name(names, name)` is the association-list find (the
+# LAWS_sweep sw_name_slot precedent): the index of the FIRST occurrence
+# of name in names.  THE JUNK CONVENTION: an UNKNOWN name lands on the
+# junk index = THE LIST'S LENGTH -- one past every valid slot, computed
+# from the list itself (sw_name_slot's junk slot 9n is the same convention
+# against a fixed slot table; here the name list is per-model and
+# arbitrary-length, so the junk index is computed, not pinned) -- so the
+# mc_ok bounds check (is_lt(junk, count)) rejects it, never silently
+# defaults.
+
+# the association-list find: the first occurrence's index; the junk
+# index (the list's length) for an unknown name.  Single self-recursive
+# spine; the head's decision goes through Bool.pick (the slot_of idiom).
+def find_name(+names: List<&2, String>, +name: String) -> Nat:
+  match names:
+    case Nil{}:
+      0n
+    case h <> t:
+      Bool.pick(Nat, String.eq(h, name), 0n, Nat.add(1n, find_name(t, name)))
+
+# the name list's length (the mprojs_len convention; the junk index)
+def snames_len(xs: List<&2, String>) -> Nat:
+  match xs:
+    case Nil{}:
+      0n
+    case h <> t:
+      Nat.add(1n, snames_len(t))
+
+# freshness fold: name does NOT occur strictly before index k (the
+# found-law's first-occurrence witness; Nil/0n arms are vacuously fresh)
+def not_before(+names: List<&2, String>, +name: String, k: Nat) -> Bool:
+  match names k:
+    case Nil{} _:
+      True{}
+    case h <> t 0n:
+      True{}
+    case h <> t 1n+p:
+      Bool.and(Bool.not(String.eq(h, name)), not_before(t, name, p))
+
+# absence fold: name occurs NOWHERE in the list (the unknown-law witness)
+def not_in(+names: List<&2, String>, +name: String) -> Bool:
+  match names:
+    case Nil{}:
+      True{}
+    case h <> t:
+      Bool.and(Bool.not(String.eq(h, name)), not_in(t, name))
+
+# the NAMED projection: src/tgt lanes + the model-relative cvar NAMES
+# (the demo's InterProjection{source_cvar='y1', target_cvar='xi'})
+type NProj is Data:
+  NProj{src: Nat, tgt: Nat, sname: String, tname: String}
+
+def nproj_src(+p: NProj) -> Nat:
+  match p:
+    case NProj{src, tgt, sname, tname}:
+      src
+
+def nproj_tgt(+p: NProj) -> Nat:
+  match p:
+    case NProj{src, tgt, sname, tname}:
+      tgt
+
+def nproj_sname(+p: NProj) -> String:
+  match p:
+    case NProj{src, tgt, sname, tname}:
+      sname
+
+def nproj_tname(+p: NProj) -> String:
+  match p:
+    case NProj{src, tgt, sname, tname}:
+      tname
+
+def nprojs_len(nps: List<&2, NProj>) -> Nat:
+  match nps:
+    case Nil{}:
+      0n
+    case h <> t:
+      Nat.add(1n, nprojs_len(t))
+
+# the i-th named projection (Nil default past the end, the nth convention;
+# the per-index laws carry lt_ok bounds witnesses so the default branch is
+# never trusted)
+def nth_nproj(nps: List<&2, NProj>, i: Nat) -> NProj:
+  match nps i:
+    case Nil{} _:
+      NProj{0n, 0n, "", ""}
+    case h <> t 0n:
+      h
+    case h <> t 1n+p:
+      nth_nproj(t, p)
+
+# lane i's model name list (Nil default past the end, the nth convention)
+def nth_snames(ms: List<&2, List<&2, String>>, i: Nat) -> List<&2, String>:
+  match ms i:
+    case Nil{} _:
+      Nil{}
+    case h <> t 0n:
+      h
+    case h <> t 1n+p:
+      nth_snames(t, p)
+
+# the NAMED view constructor: one MProj per NProj, src/tgt copied, the
+# cvar indices RESOLVED -- svar = find_name of the SOURCE lane's name list
+# at the projection's sname, tcvar = find_name of the TARGET lane's name
+# list at its tname.  Resolution is PER MODEL: the same name resolves
+# against different lists on the two sides.
+def mnview(+nps: List<&2, NProj>, +ms: List<&2, List<&2, String>>)
+    -> List<&2, MProj>:
+  match nps:
+    case Nil{}:
+      Nil{}
+    case +np <> t:
+      MProj{nproj_src(np), nproj_tgt(np),
+            find_name(nth_snames(ms, nproj_src(np)), nproj_sname(np)),
+            find_name(nth_snames(ms, nproj_tgt(np)), nproj_tname(np))}
+        <> mnview(t, ms)

@@ -306,3 +306,130 @@ law scheme_nth_inst_0:
 
 law scheme_nth_inst_1:
   {M.scheme_of(SCHEME_TABLE(), SCHEME_IDS(), 1n) == 1n : Nat}
+
+# --------------------------------------------------------------------------
+# P4 -- CVAR NAME-RESOLUTION (SWEEP_LAWS_DESIGN.md, priority P4): the
+# association-list lookup family.  A model description carries its
+# state-variable NAME LIST (List<&2, String>); find_name resolves a cvar
+# NAME to its index -- the first occurrence -- with an unknown name
+# landing on the junk index (the list's length, so the mc_ok bounds
+# check rejects it).  The named projection: source/target cvar NAMES
+# resolving against the SOURCE/TARGET models' name lists (per-model:
+# the same name resolves differently in two models).  Laws: the found
+# lookup (presence witnessed by a bounded index + the not_before
+# first-occurrence fold), the unknown lookup (the sw_name_slot_unknown
+# mirror), the pairing law (the resolved index IS the view's index),
+# the bounded composition (a named projection that resolves is valid),
+# and the instance pins.
+# --------------------------------------------------------------------------
+
+# the demo's two models, pinned: JansenRit's 6 state variables and
+# ReducedSetFitzHughNagumo's 4 ('xi' is its FIRST state variable -- the
+# demo's target_cvar slot [0]).
+def JR_NAMES() -> List<&2, String>:
+  "y0" <> "y1" <> "y2" <> "y3" <> "y4" <> "y5" <> Nil{}
+
+def FHN_NAMES() -> List<&2, String>:
+  "xi" <> "eta" <> "alpha" <> "beta" <> Nil{}
+
+def MODELS() -> List<&2, List<&2, String>>:
+  JR_NAMES() <> FHN_NAMES() <> Nil{}
+
+# the demo's named projection: cortex -> thalamus, source cvar 'y1'
+# (JansenRit), target cvar 'xi' (FHN).
+def NPROJ_GOOD() -> M.NProj:
+  M.NProj{0n, 1n, "y1", "xi"}
+
+# the named layer's shapes: cvar bounds against the STATE-VARIABLE counts
+# (6 and 4 -- the name lists' lengths; the name resolves to an index into
+# the state variables, so that is the plane the bound guards)
+def NAMED_SHAPES() -> List<&2, Nat>:
+  6n <> 4n <> Nil{}
+
+# the FOUND lookup: a name PRESENT at bounded index k (presence in Bool
+# form -- {String.eq(str_nth(names, k), name) == True}, the Bool-form
+# hypothesis pattern, since symbolic String equality has no decider) and
+# FIRST at k (the not_before fold) resolves to exactly k.
+law cvar_resolve_found:
+  for +names: List<&2, String>
+  for +name: String
+  for k: Nat
+  for +hpos: {String.eq(S.str_nth(names, k), name) == True{} : Bool}
+  for +hfresh: {M.not_before(names, name, k) == True{} : Bool}
+  for h: R.lt_ok(k, M.snames_len(names))
+  {M.find_name(names, name) == k : Nat}
+
+# the UNKNOWN lookup (the sw_name_slot_unknown mirror): a name the list
+# does not contain resolves to the junk index -- the list's OWN length,
+# computed, one past every valid slot.
+law cvar_resolve_unknown:
+  for +names: List<&2, String>
+  for +name: String
+  for +habs: {M.not_in(names, name) == True{} : Bool}
+  {M.find_name(names, name) == M.snames_len(names) : Nat}
+
+# one view row per named projection (the mview_len analog)
+law mnview_len:
+  for +nps: List<&2, M.NProj>
+  for +ms: List<&2, List<&2, String>>
+  {M.mprojs_len(M.mnview(nps, ms)) == M.nprojs_len(nps) : Nat}
+
+# THE PAIRING LAW: a named projection's RESOLVED indices ARE its view
+# row's svar/tcvar -- the view row i built by mnview carries exactly the
+# name resolution of named projection i (per side: svar against the
+# SOURCE lane's list, tcvar against the TARGET lane's).  The index
+# witness rides in Bool form ({is_le(1n+i, |nps|) == True}) because TWO
+# independent consumers (the svar and tcvar halves) each rebuild their
+# own Type witness with PR.b_le.
+law cvar_resolve_proj:
+  for +nps: List<&2, M.NProj>
+  for +ms: List<&2, List<&2, String>>
+  for +i: Nat
+  for +hib: {Nat.is_le(Nat.add(i, 1n), M.nprojs_len(nps)) == True{} : Bool}
+  {(M.mproj_svar(M.nth_mproj(M.mnview(nps, ms), i)),
+    M.mproj_tcvar(M.nth_mproj(M.mnview(nps, ms), i)))
+   ==
+   (M.find_name(M.nth_snames(ms, M.mproj_src(M.nth_mproj(M.mnview(nps, ms), i))),
+                M.nproj_sname(M.nth_nproj(nps, i))),
+    M.find_name(M.nth_snames(ms, M.mproj_tgt(M.nth_mproj(M.mnview(nps, ms), i))),
+                M.nproj_tname(M.nth_nproj(nps, i))))
+   : Nat & Nat}
+
+# THE BOUNDED COMPOSITION: for a named config whose resolved view passes
+# mc_ok, the resolved cvar index is IN RANGE of the model's cvar count --
+# cvar_resolve_proj's pairing composed with the mc_ok source bounds (a
+# named projection that resolves is valid).  The junk convention is what
+# makes this honest: an unknown name's junk index (= the name list's
+# length) fails the bound, so it cannot sneak through here.
+law cvar_resolve_bounded:
+  for +nps: List<&2, M.NProj>
+  for +ms: List<&2, List<&2, String>>
+  for +shapes: List<&2, Nat>
+  for +c: R.Config
+  for +i: Nat
+  for +hib: {Nat.is_le(Nat.add(i, 1n), M.nprojs_len(nps)) == True{} : Bool}
+  for +hok: {M.mc_ok(shapes, M.mnview(nps, ms), c) == True{} : Bool}
+  {Nat.is_lt(M.find_name(M.nth_snames(ms, M.mproj_src(M.nth_mproj(M.mnview(nps, ms), i))),
+                         M.nproj_sname(M.nth_nproj(nps, i))),
+             R.nats_nth(shapes, M.mproj_src(M.nth_mproj(M.mnview(nps, ms), i))))
+    == True{} : Bool}
+
+# the instance pins (the csr_row_good convention).
+
+# JansenRit-shaped: 'y1' resolves to index 1 of ["y0".."y5"] -- the
+# demo's source_cvar.
+law cvar_resolve_instance_jr:
+  {M.find_name(JR_NAMES(), "y1") == 1n : Nat}
+
+# the heterogeneity point: the SAME name resolves PER MODEL -- 'xi' is
+# FHN's state variable 0, and ABSENT from JansenRit's list, where it
+# lands on the junk index (the list's length, 6).
+law cvar_resolve_cross:
+  {(M.find_name(JR_NAMES(), "xi"), M.find_name(FHN_NAMES(), "xi"))
+     == (6n, 0n) : Nat & Nat}
+
+# the demo's named config is ACCEPTED: the resolved view (svar 1, tcvar
+# 0) passes the mc_ok cvar bounds against the state-variable counts.
+law cvar_ok_good:
+  {M.mc_ok(NAMED_SHAPES(), M.mnview(NPROJ_GOOD() <> Nil{}, MODELS()),
+           GOOD_C()) == True{} : Bool}

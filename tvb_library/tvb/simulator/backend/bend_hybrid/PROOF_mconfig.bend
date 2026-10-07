@@ -338,3 +338,233 @@ def Laws.scheme_nth_inst_0():
 
 def Laws.scheme_nth_inst_1():
   {==}
+
+# --------------------------------------------------------------------------
+# P4 -- the cvar NAME-RESOLUTION proofs.
+# --------------------------------------------------------------------------
+
+# Bool.not inversion: from {Bool.not(b) == True} conclude {b == False}.
+# The True case is absurd (Bool.not(True{}) == True{} normalises to
+# {False == True}, Bool.fne's contradiction); the False case is {==}.
+def not_true(b: Bool, hb: {Bool.not(b) == True{} : Bool}) -> {b == False{} : Bool}:
+  match b:
+    case True{}:
+      Bool.fne({True{} == False{} : Bool}, hb)
+    case False{}:
+      {==}
+
+# the instance pins: pure computation on the literal name lists --
+# String.eq computes on literals, so the whole lookup folds out.
+def Laws.cvar_resolve_instance_jr():
+  {==}
+
+def Laws.cvar_resolve_cross():
+  {==}
+
+def Laws.cvar_ok_good():
+  {==}
+
+# cvar_resolve_unknown: induction on the name list.  The Nil case is the
+# junk index on the empty list (both sides 0n); the cons case peels the
+# head's decision -- the absence fold gives String.eq(h, name) == False,
+# so the lookup takes the Bool.pick false arm (1n + the tail's lookup)
+# and the induction hypothesis re-composes the length.  A cong THROUGH
+# the Bool.pick decision moves the goal onto the false arm -- the pick
+# scrutinee is a parameter of the pick, not a computed value inside a
+# def, so Equal.cong reaches it (the slot_of idiom's proof shape).
+def find_unknown_go(names: List<&2, String>, +name: String,
+                   +habs: {M.not_in(names, name) == True{} : Bool})
+    -> {M.find_name(names, name) == M.snames_len(names) : Nat}:
+  match names:
+    case Nil{}:
+      {==}
+    case +h <> +t:
+      +habs2 = habs
+      +nm2 = name
+      hb = PR.and_elim_l_go(Bool.not(String.eq(h, nm2)), M.not_in(t, nm2), habs)
+      he = not_true(String.eq(h, nm2), hb)
+      ih = find_unknown_go(t, nm2, PR.and_elim_r_go(Bool.not(String.eq(h, nm2)),
+                                                    M.not_in(t, nm2), habs2))
+      Equal.trans(Nat,
+        M.find_name(h <> t, nm2),
+        Bool.pick(Nat, False{}, 0n, Nat.add(1n, M.find_name(t, nm2))),
+        M.snames_len(h <> t),
+        Equal.cong(Bool, Nat,
+                   x => Bool.pick(Nat, x, 0n, Nat.add(1n, M.find_name(t, nm2))),
+                   String.eq(h, nm2), False{}, he),
+        Equal.cong(Nat, Nat, n => Nat.add(1n, n),
+                   M.find_name(t, nm2), M.snames_len(t), ih))
+
+def Laws.cvar_resolve_unknown(names, name, habs):
+  find_unknown_go(names, name, habs)
+
+# cvar_resolve_found: induction on the list/index pair, peeling both.
+# The Nil case is absurd (the index is bounded by the list's length,
+# PR.lt_ok_nil_absurd); the 0n case rewrites the head's decision onto
+# the True arm through the presence hypothesis (Bool form, so the cong
+# is direct); the succ case splits the freshness fold into the head's
+# absence (String.eq(h, name) == False -- the false arm) and the tail's
+# freshness (the induction hypothesis), and re-composes with 1n + .
+def find_found_go(names: List<&2, String>, +name: String, k: Nat,
+                  +hpos: {String.eq(S.str_nth(names, k), name) == True{} : Bool},
+                  +hfresh: {M.not_before(names, name, k) == True{} : Bool},
+                  h: R.lt_ok(k, M.snames_len(names)))
+    -> {M.find_name(names, name) == k : Nat}:
+  match names k h:
+    case Nil{} _ h:
+      Empty.absurd({M.find_name(Nil{}, name) == k : Nat},
+                   PR.lt_ok_nil_absurd(k, h))
+    case +h0 <> +t 0n _:
+      Equal.trans(Nat,
+        M.find_name(h0 <> t, name),
+        Bool.pick(Nat, True{}, 0n, Nat.add(1n, M.find_name(t, name))),
+        0n,
+        Equal.cong(Bool, Nat,
+                   x => Bool.pick(Nat, x, 0n, Nat.add(1n, M.find_name(t, name))),
+                   String.eq(h0, name), True{}, hpos),
+        {==})
+    case +h0 <> +t 1n+(+q) hlt:
+      +hpos2 = hpos
+      +q2 = q
+      +nm2 = name
+      hb = PR.and_elim_l_go(Bool.not(String.eq(h0, name)),
+                            M.not_before(t, name, q), hfresh)
+      he = not_true(String.eq(h0, name), hb)
+      ih = find_found_go(t, name, q2, hpos2,
+                         PR.and_elim_r_go(Bool.not(String.eq(h0, name)),
+                                          M.not_before(t, name, q), hfresh),
+                         hlt)
+      Equal.trans(Nat,
+        M.find_name(h0 <> t, name),
+        Nat.add(1n, M.find_name(t, name)),
+        Nat.add(1n, q2),
+        Equal.cong(Bool, Nat,
+                   x => Bool.pick(Nat, x, 0n, Nat.add(1n, M.find_name(t, nm2))),
+                   String.eq(h0, name), False{}, he),
+        Equal.cong(Nat, Nat, n => Nat.add(1n, n),
+                   M.find_name(t, name), q2, ih))
+
+def Laws.cvar_resolve_found(names, name, k, hpos, hfresh, h):
+  find_found_go(names, name, k, hpos, hfresh, h)
+
+# mnview_len: induction on the named projections (the mview_len_go
+# pattern -- mnview recurses on the projections only, the model lists
+# ride along unpeeled).
+def mnview_len_go(+nps: List<&2, M.NProj>, +ms: List<&2, List<&2, String>>)
+    -> {M.mprojs_len(M.mnview(nps, ms)) == M.nprojs_len(nps) : Nat}:
+  match nps:
+    case Nil{}:
+      {==}
+    case np <> t:
+      Equal.cong(Nat, Nat, n => Nat.add(1n, n),
+                 M.mprojs_len(M.mnview(t, ms)), M.nprojs_len(t),
+                 mnview_len_go(t, ms))
+
+def Laws.mnview_len(nps, ms):
+  mnview_len_go(nps, ms)
+
+# the pairing halves: induction on the named projections, peeling the
+# index.  The head case is definitional (mview row 0's fields ARE the
+# head NProj's resolution); the succ case recurses into the tail -- the
+# peeled witness passes straight through (lt_ok(1n+q, 1n+L) and
+# lt_ok(q, L) share the normal form).
+def svar_pair_go(nps: List<&2, M.NProj>, +ms: List<&2, List<&2, String>>,
+                 i: Nat, h: R.lt_ok(i, M.nprojs_len(nps)))
+    -> {M.mproj_svar(M.nth_mproj(M.mnview(nps, ms), i))
+          == M.find_name(M.nth_snames(ms, M.mproj_src(M.nth_mproj(M.mnview(nps, ms), i))),
+                         M.nproj_sname(M.nth_nproj(nps, i))) : Nat}:
+  match nps i h:
+    case Nil{} _ h:
+      Empty.absurd({M.mproj_svar(M.nth_mproj(M.mnview(Nil{}, ms), i))
+                      == M.find_name(M.nth_snames(ms, M.mproj_src(M.nth_mproj(M.mnview(Nil{}, ms), i))),
+                                     M.nproj_sname(M.nth_nproj(Nil{}, i))) : Nat},
+                   PR.lt_ok_nil_absurd(i, h))
+    case np <> t 0n _:
+      {==}
+    case np <> t 1n+q hlt:
+      svar_pair_go(t, ms, q, hlt)
+
+def tcvar_pair_go(nps: List<&2, M.NProj>, +ms: List<&2, List<&2, String>>,
+                  i: Nat, h: R.lt_ok(i, M.nprojs_len(nps)))
+    -> {M.mproj_tcvar(M.nth_mproj(M.mnview(nps, ms), i))
+          == M.find_name(M.nth_snames(ms, M.mproj_tgt(M.nth_mproj(M.mnview(nps, ms), i))),
+                         M.nproj_tname(M.nth_nproj(nps, i))) : Nat}:
+  match nps i h:
+    case Nil{} _ h:
+      Empty.absurd({M.mproj_tcvar(M.nth_mproj(M.mnview(Nil{}, ms), i))
+                      == M.find_name(M.nth_snames(ms, M.mproj_tgt(M.nth_mproj(M.mnview(Nil{}, ms), i))),
+                                     M.nproj_tname(M.nth_nproj(Nil{}, i))) : Nat},
+                   PR.lt_ok_nil_absurd(i, h))
+    case np <> t 0n _:
+      {==}
+    case np <> t 1n+q hlt:
+      tcvar_pair_go(t, ms, q, hlt)
+
+# cvar_resolve_proj: the two halves assemble into the pair equality by
+# cong per component + Equal.trans (the mc_contract assembly, two
+# components).  Each half rebuilds its own Type witness from the Bool
+# form -- witnesses are not +able, the Bool proofs are.
+def Laws.cvar_resolve_proj(nps, ms, i, hib):
+  +hib2 = hib
+  +v = M.nth_mproj(M.mnview(nps, ms), i)
+  +np = M.nth_nproj(nps, i)
+  hs1 = PR.b_le(Nat.add(i, 1n), M.nprojs_len(nps), hib)
+  hs2 = PR.b_le(Nat.add(i, 1n), M.nprojs_len(nps), hib2)
+  hsvar = svar_pair_go(nps, ms, i, hs1)
+  htcvar = tcvar_pair_go(nps, ms, i, hs2)
+  Equal.trans(Nat & Nat,
+    (M.mproj_svar(v), M.mproj_tcvar(v)),
+    (M.find_name(M.nth_snames(ms, M.mproj_src(v)), M.nproj_sname(np)),
+     M.mproj_tcvar(v)),
+    (M.find_name(M.nth_snames(ms, M.mproj_src(v)), M.nproj_sname(np)),
+     M.find_name(M.nth_snames(ms, M.mproj_tgt(v)), M.nproj_tname(np))),
+    Equal.cong(Nat, Nat & Nat,
+               x => (x, M.mproj_tcvar(v)),
+               M.mproj_svar(v),
+               M.find_name(M.nth_snames(ms, M.mproj_src(v)), M.nproj_sname(np)),
+               hsvar),
+    Equal.cong(Nat, Nat & Nat,
+               y => (M.find_name(M.nth_snames(ms, M.mproj_src(v)), M.nproj_sname(np)), y),
+               M.mproj_tcvar(v),
+               M.find_name(M.nth_snames(ms, M.mproj_tgt(v)), M.nproj_tname(np)),
+               htcvar))
+
+# cvar_resolve_bounded: the pairing half (svar_pair_go) rewrites the
+# resolved index onto the view row's svar, and the mc_ok source bound at
+# that row (mc_src_nth through the and-eliminated mc_ok conjunct)
+# finishes -- the composition the law claims.  The index is transported
+# once through mnview_len by the Bool roundtrip (the mc_contract
+# pattern) because the pairing consumes the nps-length witness while
+# mc_src_nth consumes the view-length one.
+def Laws.cvar_resolve_bounded(nps, ms, shapes, c, i, hib, hok):
+  +v = M.nth_mproj(M.mnview(nps, ms), i)
+  +np = M.nth_nproj(nps, i)
+  +e_len = Laws.mnview_len(nps, ms)
+  hn = PR.b_le(Nat.add(i, 1n), M.nprojs_len(nps), hib)
+  hiC = Equal.cong(Nat, Bool, x => Nat.is_le(Nat.add(i, 1n), x),
+                   M.nprojs_len(nps), M.mprojs_len(M.mnview(nps, ms)),
+                   Equal.sym(Nat, M.mprojs_len(M.mnview(nps, ms)),
+                             M.nprojs_len(nps), e_len))
+  hiC2 = Equal.sym(Bool,
+                   Nat.is_le(Nat.add(i, 1n), M.nprojs_len(nps)),
+                   Nat.is_le(Nat.add(i, 1n), M.mprojs_len(M.mnview(nps, ms))),
+                   hiC)
+  hiV = Equal.trans(Bool,
+                   Nat.is_le(Nat.add(i, 1n), M.mprojs_len(M.mnview(nps, ms))),
+                   Nat.is_le(Nat.add(i, 1n), M.nprojs_len(nps)),
+                   True{}, hiC2, hib)
+  hb = PR.b_le(Nat.add(i, 1n), M.mprojs_len(M.mnview(nps, ms)), hiV)
+  hsrcf = Laws.mc_ok_src_cvar(shapes, M.mnview(nps, ms), c, hok)
+  hbound = Laws.mc_src_nth(shapes, M.mnview(nps, ms), i, hb, hsrcf)
+  hs = svar_pair_go(nps, ms, i, hn)
+  hsA = Equal.sym(Nat, M.mproj_svar(v),
+                  M.find_name(M.nth_snames(ms, M.mproj_src(v)), M.nproj_sname(np)), hs)
+  Equal.trans(Bool,
+    Nat.is_lt(M.find_name(M.nth_snames(ms, M.mproj_src(v)), M.nproj_sname(np)),
+              R.nats_nth(shapes, M.mproj_src(v))),
+    Nat.is_lt(M.mproj_svar(v), R.nats_nth(shapes, M.mproj_src(v))),
+    True{},
+    Equal.cong(Nat, Bool, x => Nat.is_lt(x, R.nats_nth(shapes, M.mproj_src(v))),
+               M.find_name(M.nth_snames(ms, M.mproj_src(v)), M.nproj_sname(np)),
+               M.mproj_svar(v), hsA),
+    hbound)

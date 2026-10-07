@@ -327,3 +327,35 @@ variant is the design target.
   F32 column fails --verdict. Workaround: state such laws over literal
   decoded tables (transcription pinned by the decode instance laws) --
   never ask the kernel to compute with F32.
+
+## Cvar name resolution (2026-10-05, sixth session)
+
+- Landed the P4 family in mconfig.bend / LAWS_mconfig.bend /
+  PROOF_mconfig.bend (8 laws, gates green; see SWEEP_LAWS_DESIGN.md's
+  P4 status for the design).  New proof idioms, all verified against
+  the checker:
+  - `Bool.pick` is the one-def lookup shape: a single self-recursive
+    spine whose head decision goes through `Bool.pick(Nat,
+    String.eq(h, name), 0n, 1n + find_name(t, name))` -- no helper def,
+    hence no mutual recursion (a helper that recurses back into the
+    spine would be a call cycle).  Both pick branches are consumed; on
+    pure data that is free.
+  - The proof move for a def whose match scrutinizes a COMPUTED Bool:
+    Equal.cong THROUGH the Bool slot -- `cong(Bool, Nat, x =>
+    Bool.pick(Nat, x, ...), String.eq(h, name), False{}, he)` -- works
+    because the pick's decision is a parameter of the pick, and the
+    goal LHS is convertible to the lambda applied to the scrutinee.
+  - SYMBOLIC String equality is undecidable to the kernel: a found-name
+    law cannot conclude from `{str_nth(names, k) == name : String}`
+    (String.eq(name, name) does not reduce on a symbolic name).  State
+    presence in BOOL form instead -- `{String.eq(str_nth(names, k),
+    name) == True{} : Bool}` -- and the cong is direct.  (sw_name_slot
+    dodged this by pinning the name to a literal; the Bool form is the
+    general answer.)
+  - A `-` (erased) parameter cannot be a match scrutinee ("a live
+    scrutinee matches only in a dead region"); match params stay plain.
+  - Junk-index convention that PROVES cleanly: unknown -> the list's
+    OWN length, with `find_name` NOT threading a running index (return
+    0n at Nil, 1n + at each miss).  A threaded index forces a
+    generalized goal `go(names, name, i) == i + len` whose base case is
+    the stuck term `Nat.add(i, 0n)`.
