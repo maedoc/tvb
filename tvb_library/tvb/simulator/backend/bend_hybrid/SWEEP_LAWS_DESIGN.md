@@ -2,7 +2,7 @@
 
 > **New here?** Start with [README.md](README.md) — the guided tour (goals, data structures, the high-level laws). This file is a design note.
 >
-> **Status: implemented** — LAWS_sweep.bend / PROOF_sweep.bend (15 laws, gates green; `sweep_contract` fixed to use an independent projection quantifier after review). Remaining: the JSON sweep ingress (schema open).
+> **Status: implemented** — LAWS_sweep.bend / PROOF_sweep.bend (37 laws, gates green). All five groups landed, incl. the JSON sweep ingress (columns schema) and the name->slot field-map.
 
 *Design note, 2026-10-05. Scope: what laws would prove that the sweep's
 parameter rows route to the right sims, and what the proofs look like.

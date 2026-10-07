@@ -279,7 +279,7 @@ Landed in LAWS_sweep.bend / PROOF_sweep.bend (15 laws, commits
 e88296add + a0a4ab8ac, plus the sweep_contract independent-projection
 fix). The fan's width bound is a validator conjunct (sweep_ok_width),
 so an n_sweep > 8 sweep is rejected at load time. Remaining gaps: the
-JSON sweep ingress (schema open) and the byte->word decode of the
+JSON sweep ingress LANDED (columns schema, json_sweep_contract); the byte->word decode of the
 packed sweep table (shared with the edge sections' packed laws).
 
 The original analysis (kept as the design record):
@@ -319,3 +319,11 @@ variant is the design target.
   `(a, b, c) == (a', b', c') : A & (B & C)` (right-nested), proved by
   per-component `Equal.cong` steps under `Equal.trans` -- see
   `sweep_contract` in LAWS_sweep.bend.
+
+## JSON sweep ingress (2026-10-05)
+
+- BendTT kernel F32 opaqueness: the kernel keeps `F32.div(U32.to_f32(d),
+  k)` UNREDUCED, so a law equation that must normalise THROUGH a decoded
+  F32 column fails --verdict. Workaround: state such laws over literal
+  decoded tables (transcription pinned by the decode instance laws) --
+  never ask the kernel to compute with F32.
