@@ -238,3 +238,39 @@ Sweep side:
 
 Also of record: the demo's parallel-vs-sequential bit-exactness TEST is
 the engine mirror of fan_gather_order's LAW.
+
+## Priority list 2026-10-05 (user-scoped from the gap inventory)
+
+OUT OF SCOPE / DEFERRED: arbitrary dt ratios (formalism boundary, kept out);
+model sweeps (user: not for now); output un-routing, grid sweeps, delay-unit
+conversion, coupling-function variety (backlog).
+
+P1. MONITORING VARIETY (per-subnet or global). Today: one shared master
+count (count_shared / monitor_zoh_average). Missing: per-subnet monitors
+with their own rate (sample every m master ticks, or per lane tick), the
+count laws at each rate (witness form: t = q*m + r -> count = q, the
+newest_at pattern), the per-lane monitor's count == its lane's
+publication count (composition with newest_at), the source-lane routing
++ validation family (lane in range, rate >= 1, rate-0 negative control),
+and the divisor pinning (each monitor divides by ITS count, not the
+shared one -- the per-own-step hazard count_shared's comment warns about).
+
+P2. CONNECTOME SWEEPS, fixed node count (no model sweeps). The sweep row
+gains a STRUCTURAL payload: a per-sim CSR (same indptr shape, varying
+weights/delays). Laws: the per-sim CSR routes to sim i (row routing for
+a structural payload); every row's CSR passes csr_ok (per-index
+composition); width/shape validation as in the scalar family.
+
+P3. PER-SUBNET SCHEME + STOCHASTIC SEEDS. (a) scheme routing: per-lane
+scheme id validated against the scheme table (bounds family). (b) seed
+routing: sim i's noise stream is seeded by row i's seed -- the sweep
+column machinery reused -- plus DISTINCTNESS: two sims never share a seed
+(the delay_injective analog over the seed column); reproducibility =
+determinism given routed seeds.
+
+P4. CVAR NAME-RESOLUTION. Provable as an association-list lookup law:
+the model description is a key-val list (names <-> indices); the law:
+lookup(name, model_vars) == the index the projection carries, plus the
+pairing law tying the resolved index to the projection's svar/tcvar.
+Precedent: sw_name_slot (name -> slot, unknown -> junk slot) in
+LAWS_sweep.bend.
