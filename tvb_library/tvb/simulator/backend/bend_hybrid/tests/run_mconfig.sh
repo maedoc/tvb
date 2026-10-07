@@ -17,7 +17,7 @@ else
   fail=1
 fi
 
-for f in bad/bad_cvar.bend bad/bad_cvar_name.bend bad/bad_scheme.bend; do
+for f in bad/bad_cvar.bend bad/bad_cvar_name.bend bad/bad_scheme.bend bad/bad_delay.bend; do
   if "$BEND" "$f" >/dev/null 2>&1; then
     echo "FAIL $f (negative control type-checked!)"
     fail=1

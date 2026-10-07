@@ -335,3 +335,194 @@ def mnview(+nps: List<&2, NProj>, +ms: List<&2, List<&2, String>>)
             find_name(nth_snames(ms, nproj_src(np)), nproj_sname(np)),
             find_name(nth_snames(ms, nproj_tgt(np)), nproj_tname(np))}
         <> mnview(t, ms)
+
+# --------------------------------------------------------------------------
+# P6 -- the DELAY-UNIT layer (SWEEP_LAWS_DESIGN.md, gap inventory item 6):
+# the ms -> source-step conversion + rounding, pinned.
+#
+# THE ROUNDING RULE (pinned EXACTLY): source steps = round-half-even(delay_ms
+# / dt) -- the exact rational mirror of TVB's numpy.rint(delays/dt) in
+# connectivity.set_idelays -- computed on the suite's x1e6 scaled integers:
+# with q = floor(ms_scaled / dt_scaled) and r = ms_scaled mod dt_scaled,
+# steps = q + 1 iff 2r > dt_scaled, or 2r == dt_scaled and q is odd.  A
+# delay that rounds to 0 steps is < half a source step: it is a SUB-STEP
+# delay and md_ok REJECTS nonzero ones (the bad/bad_delay.bend control).
+#
+# BendTT constraints dictate the representation (NOTES.md): no F32 anywhere
+# (the kernel keeps F32 opaque), and a divmod-closed form cannot be
+# normalised on symbolic arguments, so a quantified monotonicity law needs a
+# STRUCTURAL machine.  ms_to_steps is therefore a counted machine (md_go)
+# whose per-tick work is O(1): it carries the schedule counters (q, wd, ad,
+# ar) -- q the current chunk (quotient), wd the ticks until the next chunk
+# (wrap), ad the ticks until the rounding boundary, ar the armed flag -- and
+# accumulates s, the rounded step count, by adding 1 EXACTLY when the
+# rounding boundary (phase-position dt/2, or dt/2+1 for an even quotient's
+# tie, or (dt+1)/2 for odd dt -- positions derived below and verified
+# against the reference for dt in 1..60) is crossed.  s' = s or 1+s per
+# tick (a Bool.pick on an O(1) structural test), which is exactly the shape
+# a BendTT monotonicity induction needs.
+# --------------------------------------------------------------------------
+
+type MD is Data:
+  MD{q: Nat, wd: Nat, ad: Nat, ar: Bool, s: Nat, h: Nat}
+
+def m_q(+m: MD) -> Nat:
+  match m:
+    case MD{q, wd, ad, ar, s, h}:
+      q
+
+def m_wd(+m: MD) -> Nat:
+  match m:
+    case MD{q, wd, ad, ar, s, h}:
+      wd
+
+def m_ad(+m: MD) -> Nat:
+  match m:
+    case MD{q, wd, ad, ar, s, h}:
+      ad
+
+def m_ar(+m: MD) -> Bool:
+  match m:
+    case MD{q, wd, ad, ar, s, h}:
+      ar
+
+def m_s(+m: MD) -> Nat:
+  match m:
+    case MD{q, wd, ad, ar, s, h}:
+      s
+
+def m_h(+m: MD) -> Nat:
+  match m:
+    case MD{q, wd, ad, ar, s, h}:
+      h
+
+# structural parity (the tie rule keys off the quotient's parity)
+def odd(q: Nat) -> Bool:
+  match q:
+    case 0n:
+      False{}
+    case 1n+p:
+      Bool.not(odd(p))
+
+# O(1) structural tests (NO Nat.compare -- a value comparison inside the
+# loop would recurse on the COUNTERS' magnitudes and explode the reduction)
+def is_zero(x: Nat) -> Bool:
+  match x:
+    case 0n:
+      True{}
+    case 1n+p:
+      False{}
+
+def pred01(x: Nat) -> Nat:
+  match x:
+    case 0n:
+      0n
+    case 1n+p:
+      p
+
+def half01_go(rem: Nat, +tk: Bool, +acc: Nat) -> Nat:
+  match rem:
+    case 0n:
+      acc
+    case 1n+p:
+      half01_go(p, Bool.not(tk), Bool.pick(Nat, tk, 1n+acc, acc))
+
+def half01(x: Nat) -> Nat:
+  half01_go(x, False{}, 0n)
+
+# a new chunk with quotient q fires its boundary ad = b0 ticks from now:
+#   odd dt:  boundary at fraction (dt+1)/2 (no ties)      -> h = dt/2
+#   even dt: ties at fraction dt/2: odd q rounds up there  -> h - 1
+#            even q's tie rounds DOWN (half-to-even), so   -> h
+# (dt = 2, odd q: h-1 = 0, the boundary fires at the chunk's first tick,
+# matching the dt = 2 derived schedule; dt_scaled = 1 degenerates to one
+# boundary per tick, which is exactly round(k/1) = k.)
+def b0(+h: Nat, +dt: Nat, +q: Nat) -> Nat:
+  Bool.pick(Nat, odd(dt), h,
+            Bool.pick(Nat, odd(q), Nat.sub(h, 1n), h))
+
+# one master tick: fire the armed boundary (s += 1), advance the schedule
+# counters; on a wrap the chunk's quotient grows, the boundary rearms at the
+# NEW chunk's offset b0(q'), and a same-tick fire (dt = 2, even quotient:
+# the boundary sits at the wrap tick) still adds its +1 to s.
+def mstep(+dt: Nat, +st: MD) -> MD:
+  MD{
+    Bool.pick(Nat, is_zero(m_wd(st)), 1n+m_q(st), m_q(st)),
+    Bool.pick(Nat, is_zero(m_wd(st)), Nat.sub(dt, 1n), pred01(m_wd(st))),
+    Bool.pick(Nat, is_zero(m_wd(st)),
+              b0(m_h(st), dt, 1n+m_q(st)),
+              Bool.pick(Nat, Bool.and(m_ar(st), is_zero(m_ad(st))), 0n,
+                        Bool.pick(Nat, m_ar(st), pred01(m_ad(st)), m_ad(st)))),
+    Bool.pick(Bool, is_zero(m_wd(st)), True{},
+              Bool.pick(Bool, Bool.and(m_ar(st), is_zero(m_ad(st))), False{}, m_ar(st))),
+    Bool.pick(Nat, Bool.and(m_ar(st), is_zero(m_ad(st))), 1n+m_s(st), m_s(st)),
+    m_h(st)}
+
+def md_go(left: Nat, +dt: Nat, +st: MD) -> MD:
+  match left:
+    case 0n:
+      st
+    case 1n+p:
+      md_go(p, dt, mstep(dt, st))
+
+def md_init(+dt: Nat) -> MD:
+  MD{0n, Nat.sub(dt, 1n), half01(dt), True{}, 0n, half01(dt)}
+
+# the full machine state after ms ticks (laws read its fields)
+def ms_at(+ms: Nat, +dt: Nat) -> MD:
+  md_go(ms, dt, md_init(dt))
+
+# does the rounding boundary fire on the tick AFTER this state?
+def at_next(+st: MD) -> Bool:
+  Bool.and(m_ar(st), is_zero(m_ad(st)))
+
+# THE CONVERSION: ms_scaled -> source steps, round-half-even (see above)
+def ms_to_steps(+ms: Nat, +dt: Nat) -> Nat:
+  m_s(ms_at(ms, dt))
+
+# --------------------------------------------------------------------------
+# the DELAY guard (the config validator's ms-delay conjunct family): a
+# config carries per-lane dts (scaled) and per-projection ms delays, both
+# parallel lists in the nth convention.  md_ok accepts iff:
+#   (a) one dt per lane;
+#   (b) one ms delay per projection;
+#   (c) every dt is non-zero (a zero dt would make delay conversion
+#       meaningless);
+#   (d) every NONZERO ms delay converts to at least 1 source step -- a
+#       nonzero delay that rounds to 0 is a sub-step delay, silently
+#       collapsing two distinct causalities onto the same read; REJECTED;
+#   (e) the base plain config passes R.ok (the layer gates on the router).
+# --------------------------------------------------------------------------
+
+def dts_ok(dts: List<&2, Nat>) -> Bool:
+  match dts:
+    case Nil{}:
+      True{}
+    case h <> t:
+      Bool.and(Nat.is_ge(h, 1n), dts_ok(t))
+
+# projection i's ms delay: 0, or >= 1 converted step at its SOURCE lane's dt
+def msd_row_ok(+dts: List<&2, Nat>, +msds: List<&2, Nat>, +p: R.Proj, +i: Nat) -> Bool:
+  Bool.or(Nat.is_eq(R.nats_nth(msds, i), 0n),
+          Nat.is_ge(ms_to_steps(R.nats_nth(msds, i), R.nats_nth(dts, R.proj_src(p))), 1n))
+
+def mdels_ok_at(+dts: List<&2, Nat>, +msds: List<&2, Nat>,
+                ps: List<&2, R.Proj>, +i: Nat) -> Bool:
+  match ps:
+    case Nil{}:
+      True{}
+    case h <> t:
+      Bool.and(msd_row_ok(dts, msds, h, i),
+               mdels_ok_at(dts, msds, t, Nat.add(i, 1n)))
+
+def mdels_ok(+dts: List<&2, Nat>, +msds: List<&2, Nat>,
+             +ps: List<&2, R.Proj>) -> Bool:
+  mdels_ok_at(dts, msds, ps, 0n)
+
+# THE DELAY VALIDATOR (the green/red instance pins + bad/bad_delay.bend)
+def md_ok(+dts: List<&2, Nat>, +msds: List<&2, Nat>, +c: R.Config) -> Bool:
+  Bool.and(Nat.is_eq(R.nats_len(dts), R.nats_len(R.cfg_lanes(c))),
+  Bool.and(Nat.is_eq(R.nats_len(msds), R.projs_len(R.cfg_projs(c))),
+  Bool.and(dts_ok(dts),
+  Bool.and(mdels_ok(dts, msds, R.cfg_projs(c)),
+           R.ok(c)))))

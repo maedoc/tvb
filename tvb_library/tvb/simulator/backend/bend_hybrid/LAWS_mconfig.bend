@@ -536,3 +536,131 @@ law json_named_contract:
                      R.cfg_projs(J.jn_cfg(J.json_named_decode(s))), t, i))
    == (True{}, True{}, True{})
    : Bool & (Bool & Bool)}
+
+# --------------------------------------------------------------------------
+# P6 -- the DELAY-UNIT layer (SWEEP_LAWS_DESIGN.md, gap inventory item 6):
+# the ms -> source-step conversion and its rounding rule, pinned.
+#
+# THE ROUNDING RULE (one line): with both delays and dt carried as the
+# suite's x1e6 scaled integers, source steps = round-half-even(ms/dt) --
+# q + 1 iff 2r > dt, or 2r == dt with q odd, where (q, r) = divmod(ms, dt)
+# -- the exact rational mirror of TVB's numpy.rint(delays/dt).
+#
+# Law style follows the family convention: concrete rounding-rule witnesses
+# (the csr_ok_good type: positive instance pins are load-bearing), the
+# quantified monotonicity law (the causation guard: ms1 <= ms2 must never
+# shift the converted read EARLIER), the per-tick non-decrease form, the
+# strict "where the range allows" law (a boundary tick provably ADDS its
+# step), and the validator's green/red instance pins.  Witness magnitudes
+# are kept modest: the machine's cost is linear in the scaled ms value.
+# --------------------------------------------------------------------------
+
+# the demo's delays: dt 0.1 ms per lane (100000), one projection whose
+# coupling delay is 0.2 ms (200000) -> round(2.0) = 2 source steps
+def GOOD_DTS() -> List<&2, Nat>:
+  100n <> 100n <> Nil{}
+
+def GOOD_MSDS() -> List<&2, Nat>:
+  200n <> Nil{}
+
+# the sub-step delay: 0.04 ms at dt 0.1 ms -> round(0.4) = 0 steps, the
+# nonzero delay that must be REJECTED by the validator
+# (witnesses are x 1e-3 of the nominal x1e6-scaled values; the rules
+# pin RATIOS exactly, and the countdown machine's per-tick cost is
+# linear in the scaled ms, so instances stay small to fit the
+# kernel-side verdict reduction budgets)
+def SUBSTEP_MSDS() -> List<&2, Nat>:
+  40n <> Nil{}
+
+# --------------------------------------------------------------------------
+# the rounding rule on concrete witnesses (a)/(c) of the family spec:
+# --------------------------------------------------------------------------
+
+# the exact-division case: 0.2 ms at dt 0.1 ms is 2.0 ratios -> 2 steps
+law mdelay_exact:
+  {M.ms_to_steps(200n, 100n) == 2n : Nat}
+
+# the TIE witness: 0.05 ms at dt 0.1 ms is exactly 0.5 ratios, and
+# half-to-even rounds the EVEN quotient down -> 0 steps (round-half-UP
+# would give 1; the rule is pinned as the reference's rint, not half-up)
+law mdelay_tie:
+  {M.ms_to_steps(50n, 100n) == 0n : Nat}
+
+# a FRACTIONAL, non-tie rounding witness: 0.75 ms at dt 0.1 ms rounds
+# up to 1 step (floor is 0, ceiling is 1, and the rule must answer 1)
+law mdelay_round_frac:
+  {M.ms_to_steps(75n, 100n) == 1n : Nat}
+
+# the OFF-BY-ROUNDING witness: 0.15 ms at dt 0.1 ms is exactly 1.5
+# ratios, the ODD quotient rounds up -> 2 steps (truncation would give 1:
+# one source step of causality silently lost -- exactly the gap item's
+# "off-by-rounding shifts causality")
+law mdelay_round_up:
+  {M.ms_to_steps(150n, 100n) == 2n : Nat}
+
+# the sub-step pin (the guard's premise): 0.04 ms at dt 0.1 ms -> 0 steps
+law mdelay_substep:
+  {M.ms_to_steps(40n, 100n) == 0n : Nat}
+
+# real TVB-ish values (c): dt 0.1 ms -> a 0.3 ms delay is exactly 3 steps
+law mdelay_tvb_dt01:
+  {M.ms_to_steps(300n, 100n) == 3n : Nat}
+
+# real TVB-ish values (c): dt 0.5 ms -> a 0.5 ms delay is exactly 1 step
+law mdelay_tvb_dt05:
+  {M.ms_to_steps(500n, 500n) == 1n : Nat}
+
+# the strict-lattice instance (delay_injective's spirit, in instance form):
+# two exact-step delays convert to DISTINCT steps -- monotone and injective
+# on the step lattice
+law mdelay_lattice:
+  {Nat.is_ne(M.ms_to_steps(100n, 100n),
+             M.ms_to_steps(200n, 100n)) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# the quantified family (b): monotonicity.  ms1 <= ms2 must never shift the
+# converted delay EARLIER -- the "causality cannot silently reorder" guard.
+# (The machine's per-tick step is a +0/+1 pick, which is the shape BendTT
+# can induct on; the divmod-closed form cannot reduce on symbolic ms.)
+# --------------------------------------------------------------------------
+
+# the per-tick form: converting 1 more ms-tick never DECREASES the steps
+law mdelay_micro:
+  for +ms: Nat
+  for +dt: Nat
+  {Nat.is_le(M.ms_to_steps(ms, dt), M.ms_to_steps(1n+ms, dt)) == True{} : Bool}
+
+# THE quantified monotonicity law, decider-witness form
+law mdelay_mono:
+  for +ms1: Nat
+  for +ms2: Nat
+  for +dt: Nat
+  for h: R.le_ok(ms1, ms2)
+  {Nat.is_le(M.ms_to_steps(ms1, dt), M.ms_to_steps(ms2, dt)) == True{} : Bool}
+
+# strict increase WHERE THE RANGE ALLOWS: an ms delay whose NEXT tick is a
+# rounding boundary (at_next on the machine state) converts to a step count
+# strictly below its successor's -- the boundary ADDS its step (the
+# half-step plateau cannot silently absorb a boundary the rule says fires).
+law mdelay_cross:
+  for +ms1: Nat
+  for +dt: Nat
+  for +hjs: {M.at_next(M.ms_at(ms1, dt)) == True{} : Bool}
+  {Nat.is_ne(M.ms_to_steps(ms1, dt),
+             M.ms_to_steps(Nat.add(ms1, 1n), dt)) == True{} : Bool}
+
+# --------------------------------------------------------------------------
+# the validator's instance pins (the mc_ok_good / mc_ok_bad_cvar pattern):
+# --------------------------------------------------------------------------
+
+# the demo's network with per-lane dt 0.1 ms and a 0.2 ms coupling delay is
+# ACCEPTED: one dt per lane, one ms delay per projection, both dts >= 1,
+# the nonzero delay converts to 2 >= 1 steps, base R.ok green.
+law md_ok_good:
+  {M.md_ok(GOOD_DTS(), GOOD_MSDS(), GOOD_C()) == True{} : Bool}
+
+# the guard's red pin: the SAME network with the 0.04 ms sub-step delay
+# (rounds to 0 steps) is REJECTED -- a nonzero delay collapsing onto the
+# zero-step read would silently merge two causalities onto one line.
+law md_ok_bad_substep:
+  {M.md_ok(GOOD_DTS(), SUBSTEP_MSDS(), GOOD_C()) == False{} : Bool}

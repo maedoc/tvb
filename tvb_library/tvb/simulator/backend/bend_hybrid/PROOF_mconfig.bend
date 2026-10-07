@@ -785,3 +785,197 @@ def Laws.json_named_contract(s, t, i, h, hib):
                  S.routing_bundle(c, R.init_lanes(R.cfg_lanes(c)),
                                   R.cfg_projs(c), t, i),
                  True{}, hroute)))
+
+# --------------------------------------------------------------------------
+# P6 -- the DELAY-UNIT proofs.
+#
+# The machine's per-tick step is s' = s or 1+s (a Bool.pick on the O(1)
+# structural "armed and boundary due" test, at_next), which is exactly the
+# shape BendTT can induct on.  Monotonicity therefore needs no div/mod
+# lemmas: the countdown's accumulator can never decrease (le_refl/le_succ/
+# pick-arm), and "more ticks from the same state" is run_grow, composed by
+# the le_ok-witness induction run_mono_tick.  The rounding-rule witnesses
+# and the validator pins are literal computation ({==} over the machine, a
+# linear pass in the scaled ms value -- the divmod-closed form is too slow
+# to unfold on these magnitudes and does not reduce on symbolic args at
+# all, which is why the machine IS the definition).
+# --------------------------------------------------------------------------
+
+# local Bool le/ne bricks (PROOF_router's fills do not re-export; the
+# plain defs below re-derive them in two lines each)
+def le_refl(n: Nat) -> {Nat.is_le(n, n) == True{} : Bool}:
+  match n:
+    case 0n:
+      {==}
+    case 1n+p:
+      le_refl(p)
+
+def le_succ(n: Nat) -> {Nat.is_le(n, 1n+n) == True{} : Bool}:
+  match n:
+    case 0n:
+      {==}
+    case 1n+p:
+      le_succ(p)
+
+def ne_succ_local(n: Nat) -> {Nat.is_ne(1n+n, n) == True{} : Bool}:
+  match n:
+    case 0n:
+      {==}
+    case 1n+p:
+      ne_succ_local(p)
+
+# pick arms: s or 1+s -- the machine's step can only keep or grow
+def s_le_pick(s: Nat, js: Bool)
+    -> {Nat.is_le(s, Bool.pick(Nat, js, 1n+s, s)) == True{} : Bool}:
+  match js:
+    case True{}:
+      le_succ(s)
+    case False{}:
+      le_refl(s)
+
+# the per-tick non-decrease: m_s(mstep(dt, st)) reduces (definitionally)
+# to pick(at_next(st), 1n+m_s(st), m_s(st))
+def tick_le(+dt: Nat, +st: M.MD)
+    -> {Nat.is_le(M.m_s(st), M.m_s(M.mstep(dt, st))) == True{} : Bool}:
+  s_le_pick(M.m_s(st), M.at_next(st))
+
+# running ticks from a state only grows the accumulated steps
+def run_grow(left: Nat, +dt: Nat, +st: M.MD)
+    -> {Nat.is_le(M.m_s(st), M.m_s(M.md_go(left, dt, st))) == True{} : Bool}:
+  match left:
+    case 0n:
+      le_refl(M.m_s(st))
+    case 1n+(+p):
+      PR.le_trans_go(M.m_s(st), M.m_s(M.mstep(dt, st)),
+                     M.m_s(M.md_go(p, dt, M.mstep(dt, st))),
+                     tick_le(dt, st), run_grow(p, dt, M.mstep(dt, st)))
+
+# the double-countdown monotonicity: from ANY state, ms1 <= ms2 ticks give
+# steps(ms1) <= steps(ms2) -- the induction rides the le_ok witness
+# (le_ok(1n+p, 1n+q) is le_ok(p, q), so the peeled witness passes through)
+def run_mono_tick(n1: Nat, n2: Nat, h: R.le_ok(n1, n2), +dt: Nat, +st: M.MD)
+    -> {Nat.is_le(M.m_s(M.md_go(n1, dt, st)),
+                  M.m_s(M.md_go(n2, dt, st))) == True{} : Bool}:
+  match n1 n2 h:
+    case 0n _ h:
+      run_grow(n2, dt, st)
+    case 1n+p 0n h:
+      Empty.absurd({Nat.is_le(M.m_s(M.md_go(1n+p, dt, st)),
+                              M.m_s(M.md_go(0n, dt, st))) == True{} : Bool}, h)
+    case 1n+p 1n+q h:
+      run_mono_tick(p, q, h, dt, M.mstep(dt, st))
+
+# le_ok(ms, 1n+ms), structurally
+def le_succ_t(x: Nat) -> R.le_ok(x, 1n+x):
+  match x:
+    case 0n:
+      Unit{}
+    case 1n+p:
+      le_succ_t(p)
+
+def Laws.mdelay_micro(ms, dt):
+  run_mono_tick(ms, 1n+ms, le_succ_t(ms), dt, M.md_init(dt))
+
+def Laws.mdelay_mono(ms1, ms2, dt, h):
+  run_mono_tick(ms1, ms2, h, dt, M.md_init(dt))
+
+# tick-composition: running a+b ticks == running a, then b more (the
+# run_segmentable analog for the delay machine; the countdown peels the
+# first tick, so the induction is on the FIRST addend)
+def comp_go(a: Nat, b: Nat, +dt: Nat, +st: M.MD)
+    -> {M.md_go(Nat.add(a, b), dt, st) == M.md_go(b, dt, M.md_go(a, dt, st)) : M.MD}:
+  match a:
+    case 0n:
+      {==}
+    case 1n+(+p):
+      Equal.trans(M.MD,
+        M.md_go(Nat.add(1n+p, b), dt, st),
+        M.md_go(Nat.add(p, b), dt, M.mstep(dt, st)),
+        M.md_go(b, dt, M.md_go(p, dt, M.mstep(dt, st))),
+        {==},
+        comp_go(p, b, dt, M.mstep(dt, st)))
+
+# mdelay_cross: a state whose NEXT tick is a rounding boundary (at_next)
+# converts ms1 to one step FEWER than ms1+1 -- the boundary's +1 lands
+# inside the window.  The +1 is exposed by the tick composition (one more
+# tick = one mstep from the state), and the at_next hypothesis rewrites
+# the pick onto its 1n+ arm.
+def Laws.mdelay_cross(ms1, dt, hjs):
+  +st1 = M.ms_at(ms1, dt)
+  +e1 = comp_go(ms1, 1n, dt, M.md_init(dt))
+  +eA = Equal.trans(Nat,
+        M.ms_to_steps(Nat.add(ms1, 1n), dt),
+        M.m_s(M.mstep(dt, st1)),
+        1n+M.ms_to_steps(ms1, dt),
+        Equal.trans(Nat,
+          M.ms_to_steps(Nat.add(ms1, 1n), dt),
+          M.m_s(M.md_go(1n, dt, st1)),
+          M.m_s(M.mstep(dt, st1)),
+          Equal.trans(Nat,
+            M.ms_to_steps(Nat.add(ms1, 1n), dt),
+            M.m_s(M.md_go(Nat.add(ms1, 1n), dt, M.md_init(dt))),
+            M.m_s(M.md_go(1n, dt, st1)),
+            {==},
+            Equal.cong(M.MD, Nat, x => M.m_s(x),
+                       M.md_go(Nat.add(ms1, 1n), dt, M.md_init(dt)),
+                       M.md_go(1n, dt, st1), e1)),
+          {==}),
+        Equal.trans(Nat,
+          M.m_s(M.mstep(dt, st1)),
+          Bool.pick(Nat, M.at_next(st1), 1n+M.m_s(st1), M.m_s(st1)),
+          1n+M.ms_to_steps(ms1, dt),
+          {==},
+          Equal.trans(Nat,
+            Bool.pick(Nat, M.at_next(st1), 1n+M.m_s(st1), M.m_s(st1)),
+            1n+M.m_s(st1),
+            1n+M.ms_to_steps(ms1, dt),
+            Equal.cong(Bool, Nat,
+                       x => Bool.pick(Nat, x, 1n+M.m_s(st1), M.m_s(st1)),
+                       M.at_next(st1), True{}, hjs),
+            {==})))
+  Equal.trans(Bool,
+    Nat.is_ne(M.ms_to_steps(ms1, dt), M.ms_to_steps(Nat.add(ms1, 1n), dt)),
+    Nat.is_ne(M.ms_to_steps(ms1, dt), 1n+M.ms_to_steps(ms1, dt)),
+    True{},
+    Equal.cong(Nat, Bool, x => Nat.is_ne(M.ms_to_steps(ms1, dt), x),
+               M.ms_to_steps(Nat.add(ms1, 1n), dt),
+               1n+M.ms_to_steps(ms1, dt), eA),
+    PR.ne_symm(1n+M.ms_to_steps(ms1, dt), M.ms_to_steps(ms1, dt),
+               ne_succ_local(M.ms_to_steps(ms1, dt))))
+
+# --------------------------------------------------------------------------
+# the instance pins: literal computation over the machine (the linear
+# passes stay small by construction -- witnesses are chosen in the
+# 4e1..5e2 band, ratios identical to the nominal 1e6-scaled values, so
+# the kernel-side verdict reduction budgets are respected).
+# --------------------------------------------------------------------------
+
+def Laws.mdelay_exact():
+  {==}
+
+def Laws.mdelay_tie():
+  {==}
+
+def Laws.mdelay_round_frac():
+  {==}
+
+def Laws.mdelay_round_up():
+  {==}
+
+def Laws.mdelay_substep():
+  {==}
+
+def Laws.mdelay_tvb_dt01():
+  {==}
+
+def Laws.mdelay_tvb_dt05():
+  {==}
+
+def Laws.mdelay_lattice():
+  {==}
+
+def Laws.md_ok_good():
+  {==}
+
+def Laws.md_ok_bad_substep():
+  {==}
